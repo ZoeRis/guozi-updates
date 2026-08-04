@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "actions": [
     {
       "name": "开心摇摆",
@@ -11,6 +11,48 @@
       "loops": 4,
       "speech": "耶嘿！",
       "trigger": "both"
+    },
+    {
+      "name": "组合动作测试",
+      "trigger": "manual",
+      "steps": [
+        {
+          "type": "say",
+          "text": "看我！"
+        },
+        {
+          "type": "jump",
+          "height": 45,
+          "duration": 650,
+          "repeats": 1
+        },
+        {
+          "type": "move",
+          "dx": 90,
+          "dy": 0,
+          "duration": 500
+        },
+        {
+          "type": "shake",
+          "distance": 7,
+          "duration": 600,
+          "cycles": 7
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "happy.PNG",
+            "normal.PNG"
+          ],
+          "frame_interval": 160,
+          "loops": 3,
+          "playback": "pingpong"
+        },
+        {
+          "type": "return",
+          "duration": 500
+        }
+      ]
     }
   ]
 }
