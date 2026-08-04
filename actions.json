@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "actions": [
     {
       "name": "开心摇摆",
@@ -10,17 +10,6 @@
       "frame_interval": 220,
       "loops": 4,
       "speech": "耶嘿！",
-      "trigger": "manual"
-    },
-    {
-      "name": "线上新增测试",
-      "frames": [
-        "onlinehappy.PNG",
-        "onlinenormal.PNG"
-      ],
-      "frame_interval": 180,
-      "loops": 5,
-      "speech": "新动作同步成功啦！",
       "trigger": "manual"
     }
   ]
