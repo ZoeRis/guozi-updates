@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "开心摇摆",
+      "frames": [
+        "happy.PNG",
+        "normal.PNG"
+      ],
+      "frame_interval": 220,
+      "loops": 4,
+      "speech": "耶嘿！",
+      "trigger": "manual"
+    }
+  ]
+}
