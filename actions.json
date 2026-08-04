@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "actions": [
     {
       "name": "开心摇摆",
@@ -13,30 +13,18 @@
       "trigger": "both"
     },
     {
-      "name": "组合动作测试",
+      "name": "轻轻蹦一下",
       "trigger": "manual",
       "steps": [
         {
           "type": "say",
-          "text": "看我！"
+          "text": "嘿咻！"
         },
         {
           "type": "jump",
-          "height": 45,
-          "duration": 650,
+          "height": 24,
+          "duration": 700,
           "repeats": 1
-        },
-        {
-          "type": "move",
-          "dx": 90,
-          "dy": 0,
-          "duration": 500
-        },
-        {
-          "type": "shake",
-          "distance": 7,
-          "duration": 600,
-          "cycles": 7
         },
         {
           "type": "frames",
@@ -44,13 +32,9 @@
             "happy.PNG",
             "normal.PNG"
           ],
-          "frame_interval": 160,
-          "loops": 3,
-          "playback": "pingpong"
-        },
-        {
-          "type": "return",
-          "duration": 500
+          "frame_interval": 220,
+          "loops": 1,
+          "playback": "loop"
         }
       ]
     }
