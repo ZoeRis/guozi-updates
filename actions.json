@@ -10,7 +10,7 @@
       "frame_interval": 220,
       "loops": 4,
       "speech": "耶嘿！",
-      "trigger": "manual"
+      "trigger": "both"
     }
   ]
 }
