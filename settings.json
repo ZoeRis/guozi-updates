@@ -1,0 +1,12 @@
+{
+  "pet_size": 150,
+  "walk_speed": 2,
+  "speech_wait_min": 30,
+  "speech_wait_max": 90,
+  "speech_duration": 3,
+  "sleep_wait_min": 90,
+  "sleep_wait_max": 180,
+  "sleep_duration_min": 30,
+  "sleep_duration_max": 90,
+  "sleep_frame_interval": 900
+}
