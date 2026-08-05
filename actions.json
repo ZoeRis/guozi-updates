@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "actions": [
     {
       "name": "开心摇摆",
@@ -95,6 +95,10 @@
         "single_click"
       ],
       "steps": [
+        {
+          "type": "sound",
+          "file": "guozi_pop.wav"
+        },
         {
           "type": "say",
           "texts": [
