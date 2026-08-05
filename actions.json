@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "actions": [
     {
       "name": "开心摇摆",
@@ -116,6 +116,39 @@
           "frame_interval": 200,
           "loops": 2,
           "playback": "pingpong"
+        }
+      ]
+    },
+    {
+      "name": "别戳我啦",
+      "triggers": [
+        "single_click"
+      ],
+      "steps": [
+        {
+          "type": "sound",
+          "file": "guozi_pop.wav"
+        },
+        {
+          "type": "say",
+          "texts": [
+            "别戳我啦！",
+            "哎呀！",
+            "我要躲开！"
+          ]
+        },
+        {
+          "type": "move_away_mouse",
+          "distance": 170,
+          "duration": 450
+        },
+        {
+          "type": "wait",
+          "duration": 350
+        },
+        {
+          "type": "return",
+          "duration": 550
         }
       ]
     }
