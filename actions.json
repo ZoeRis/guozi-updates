@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "actions": [
     {
       "name": "开心摇摆",
@@ -37,6 +37,32 @@
           ],
           "frame_interval": 220,
           "loops": 1,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "睡醒啦",
+      "triggers": [
+        "wake"
+      ],
+      "steps": [
+        {
+          "type": "say",
+          "texts": [
+            "睡醒啦！",
+            "果子醒来啦。",
+            "又精神了耶！"
+          ]
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "happy.PNG",
+            "normal.PNG"
+          ],
+          "frame_interval": 240,
+          "loops": 2,
           "playback": "loop"
         }
       ]
