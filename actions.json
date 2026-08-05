@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "actions": [
     {
       "name": "开心摇摆",
@@ -86,6 +86,32 @@
           "height": 18,
           "duration": 600,
           "repeats": 1
+        }
+      ]
+    },
+    {
+      "name": "点点反应",
+      "triggers": [
+        "single_click"
+      ],
+      "steps": [
+        {
+          "type": "say",
+          "texts": [
+            "你点到我啦！",
+            "怎么啦？",
+            "果子在这里。"
+          ]
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "happy.PNG",
+            "normal.PNG"
+          ],
+          "frame_interval": 200,
+          "loops": 2,
+          "playback": "pingpong"
         }
       ]
     }
