@@ -1,5 +1,5 @@
 {
-  "version": 12,
+  "version": 13,
   "actions": [
     {
       "name": "开心摇摆",
@@ -90,7 +90,7 @@
       ]
     },
     {
-      "name": "点点反应",
+      "name": "被戳反应",
       "triggers": [
         "single_click"
       ],
@@ -102,20 +102,20 @@
         {
           "type": "say",
           "texts": [
-            "你点到我啦！",
-            "怎么啦？",
-            "果子在这里。"
+            "你戳到我啦！",
+            "哎呀！",
+            "怎么啦？"
           ]
         },
         {
           "type": "frames",
           "frames": [
-            "happy.PNG",
-            "normal.PNG"
+            "poke1.PNG",
+            "poke2.PNG"
           ],
-          "frame_interval": 200,
+          "frame_interval": 170,
           "loops": 2,
-          "playback": "pingpong"
+          "playback": "loop"
         }
       ]
     }
