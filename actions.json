@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "actions": [
     {
       "name": "开心摇摆",
@@ -116,6 +116,69 @@
           "frame_interval": 170,
           "loops": 1,
           "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "连续戳三次",
+      "triggers": [
+        "triple_click"
+      ],
+      "steps": [
+        {
+          "type": "sound",
+          "file": "poke.wav"
+        },
+        {
+          "type": "say",
+          "text": "你怎么还戳呀！"
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "poke1.PNG",
+            "poke2.PNG"
+          ],
+          "frame_interval": 150,
+          "loops": 1,
+          "playback": "loop"
+        },
+        {
+          "type": "shake",
+          "distance": 6,
+          "duration": 420,
+          "cycles": 6
+        }
+      ]
+    },
+    {
+      "name": "连续戳五次",
+      "triggers": [
+        "five_click"
+      ],
+      "steps": [
+        {
+          "type": "sound",
+          "file": "poke.wav"
+        },
+        {
+          "type": "say",
+          "text": "还戳！我跑啦！"
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "poke1.PNG",
+            "poke2.PNG"
+          ],
+          "frame_interval": 130,
+          "loops": 1,
+          "playback": "loop"
+        },
+        {
+          "type": "move_away_mouse",
+          "distance": 260,
+          "duration": 650
         }
       ]
     }
