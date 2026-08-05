@@ -1,5 +1,5 @@
 {
-  "version": 13,
+  "version": 14,
   "actions": [
     {
       "name": "开心摇摆",
@@ -114,7 +114,7 @@
             "poke2.PNG"
           ],
           "frame_interval": 170,
-          "loops": 2,
+          "loops": 1,
           "playback": "loop"
         }
       ]
