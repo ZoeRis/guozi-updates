@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "actions": [
     {
       "name": "开心摇摆",
@@ -64,6 +64,28 @@
           "frame_interval": 240,
           "loops": 2,
           "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "启动见面",
+      "triggers": [
+        "startup"
+      ],
+      "steps": [
+        {
+          "type": "say",
+          "texts": [
+            "果子来啦！",
+            "又见面啦！",
+            "我来陪你啦。"
+          ]
+        },
+        {
+          "type": "jump",
+          "height": 18,
+          "duration": 600,
+          "repeats": 1
         }
       ]
     }
