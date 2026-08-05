@@ -1,5 +1,5 @@
 {
-  "version": 14,
+  "version": 15,
   "actions": [
     {
       "name": "开心摇摆",
@@ -97,7 +97,7 @@
       "steps": [
         {
           "type": "sound",
-          "file": "guozi_pop.wav"
+          "file": "poke.wav"
         },
         {
           "type": "say",
