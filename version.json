@@ -1,0 +1,24 @@
+{
+  "version": "2.6",
+  "app_version": 7,
+  "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
+  "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
+  "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
+  "actions_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/actions.json",
+  "greetings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/greetings.json",
+  "core_images": [
+    "normal.PNG",
+    "blink.PNG",
+    "happy.PNG",
+    "hello1.PNG",
+    "hello2.PNG",
+    "walkleft1.PNG",
+    "walkleft2.PNG",
+    "walkright1.PNG",
+    "walkright2.PNG",
+    "sleep1.PNG",
+    "sleep2.PNG",
+    "drag1.PNG",
+    "drag2.PNG"
+  ]
+}
