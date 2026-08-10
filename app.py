@@ -494,6 +494,7 @@ class DesktopPet(QLabel):
         self.press_position = None
         self.is_dragging = False
         self.ignore_next_left_release = False
+        self.click_woke_from_sleep = False
 
         # drag1.PNG / drag2.PNG 的固定抓取点。
         # 原图约为 (527, 56) / 1000×1000。
@@ -1529,7 +1530,9 @@ class DesktopPet(QLabel):
         )
 
     def load_image(self, filename):
-        path = self.image_path(filename)
+        # 核心图片也允许被 online_images 中的新版覆盖。
+        # 本地没有线上版本时自动回退到打包自带图片。
+        path = self.action_image_path(filename)
         pixmap = QPixmap(str(path))
 
         if pixmap.isNull():
@@ -1591,7 +1594,7 @@ class DesktopPet(QLabel):
             self.load_settings()
             self.load_messages()
             self.load_actions()
-            self.preload_action_sounds()
+            self.refresh_action_sound_cache()
             self.load_greetings()
             self.load_all_images()
             self.apply_timer_settings()
@@ -1801,6 +1804,60 @@ class DesktopPet(QLabel):
             CDN_REPO_BASE_URL + relative_path,
         )
 
+    def core_image_filenames_from_version(
+        self,
+        version_data,
+    ):
+        """读取 version.json 指定的核心图片列表。"""
+
+        raw_filenames = version_data.get(
+            "core_images",
+            [],
+        )
+
+        if not isinstance(raw_filenames, list):
+            raise ValueError("核心图片列表格式错误。")
+
+        filenames = []
+
+        for raw_name in raw_filenames[:100]:
+            if not isinstance(raw_name, str):
+                raise ValueError("核心图片文件名无效。")
+
+            filename = raw_name.strip()
+
+            if (
+                not filename
+                or Path(filename).name != filename
+                or Path(filename).suffix.lower()
+                not in (
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                    ".webp",
+                )
+            ):
+                raise ValueError(
+                    "核心图片文件名不安全。"
+                )
+
+            if filename not in filenames:
+                filenames.append(filename)
+
+        return filenames
+
+    def merge_unique_filenames(self, *groups):
+        """合并多个文件名列表，同时保持顺序并去重。"""
+
+        merged = []
+
+        for group in groups:
+            for filename in group:
+                if filename not in merged:
+                    merged.append(filename)
+
+        return merged
+
     def action_filenames_from_text(self, actions_text):
         """提取旧动作和步骤序列引用的全部图片。"""
 
@@ -1935,16 +1992,12 @@ class DesktopPet(QLabel):
 
         return filenames
 
-    def download_action_images(
+    def download_named_images(
         self,
-        actions_text,
+        filenames,
         preferred_source=0,
     ):
-        """下载 actions.json 引用的所有图片。"""
-
-        filenames = self.action_filenames_from_text(
-            actions_text
-        )
+        """下载指定的线上图片，并在替换前验证图片内容。"""
 
         ONLINE_IMAGE_DIR.mkdir(
             parents=True,
@@ -1954,8 +2007,15 @@ class DesktopPet(QLabel):
         downloaded_count = 0
 
         for filename in filenames:
+            safe_name = self.sanitize_action_filename(
+                filename
+            )
+
+            if safe_name is None:
+                raise ValueError("图片文件名不安全。")
+
             encoded_name = urllib.parse.quote(
-                filename,
+                safe_name,
                 safe="",
             )
             image_urls = (
@@ -1979,9 +2039,11 @@ class DesktopPet(QLabel):
 
             temp_path = (
                 ONLINE_IMAGE_DIR
-                / f"{filename}.new"
+                / f"{safe_name}.new"
             )
-            final_path = ONLINE_IMAGE_DIR / filename
+            final_path = (
+                ONLINE_IMAGE_DIR / safe_name
+            )
 
             temp_path.write_bytes(image_data)
 
@@ -1995,7 +2057,7 @@ class DesktopPet(QLabel):
                     pass
 
                 raise ValueError(
-                    f"动作图片无法读取：{filename}"
+                    f"图片无法读取：{safe_name}"
                 )
 
             temp_path.replace(final_path)
@@ -2003,12 +2065,28 @@ class DesktopPet(QLabel):
 
         return downloaded_count
 
+    def download_action_images(
+        self,
+        actions_text,
+        preferred_source=0,
+    ):
+        """兼容旧调用：下载 actions.json 引用的所有图片。"""
+
+        filenames = self.action_filenames_from_text(
+            actions_text
+        )
+
+        return self.download_named_images(
+            filenames,
+            preferred_source,
+        )
+
     def download_action_sounds(
         self,
         actions_text,
         preferred_source=0,
     ):
-        """下载 actions.json 引用的全部 WAV 音效。"""
+        """同步 actions.json 引用的 WAV；未变化的文件不碰播放器。"""
 
         filenames = (
             self.action_sound_filenames_from_text(
@@ -2024,7 +2102,7 @@ class DesktopPet(QLabel):
             exist_ok=True,
         )
 
-        downloaded_count = 0
+        changed_count = 0
 
         for filename in filenames:
             encoded_name = urllib.parse.quote(
@@ -2057,7 +2135,9 @@ class DesktopPet(QLabel):
                 ONLINE_SOUND_DIR
                 / f"{filename}.new"
             )
-            final_path = ONLINE_SOUND_DIR / filename
+            final_path = (
+                ONLINE_SOUND_DIR / filename
+            )
 
             temp_path.write_bytes(sound_data)
 
@@ -2088,10 +2168,101 @@ class DesktopPet(QLabel):
                     f"动作音效无法读取：{filename}"
                 ) from error
 
-            temp_path.replace(final_path)
-            downloaded_count += 1
+            # GitHub 上的 WAV 与本地完全一样时：
+            # 不替换文件，也不重建 QSoundEffect。
+            unchanged = False
 
-        return downloaded_count
+            if final_path.exists():
+                try:
+                    unchanged = (
+                        final_path.read_bytes()
+                        == sound_data
+                    )
+                except OSError:
+                    unchanged = False
+
+            if unchanged:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+                continue
+
+            # 只有真正换音效时才释放该 WAV 的播放器。
+            self.discard_cached_sound_effect(
+                filename
+            )
+
+            temp_path.replace(final_path)
+            changed_count += 1
+
+        return changed_count
+
+    def cleanup_online_asset_directory(
+        self,
+        directory,
+        keep_names,
+        allowed_suffixes,
+    ):
+        """删除线上缓存目录里已经不再引用的受管文件。"""
+
+        if not directory.exists():
+            return 0
+
+        keep_names = set(keep_names)
+        deleted_count = 0
+
+        for path in directory.iterdir():
+            if not path.is_file():
+                continue
+
+            # 临时 .new 文件由各下载流程自行管理。
+            if path.name.endswith(".new"):
+                continue
+
+            if path.suffix.lower() not in allowed_suffixes:
+                continue
+
+            if path.name in keep_names:
+                continue
+
+            try:
+                path.unlink()
+                deleted_count += 1
+            except OSError:
+                # 清理失败不能破坏已经成功的更新。
+                pass
+
+        return deleted_count
+
+    def cleanup_online_assets(
+        self,
+        image_filenames,
+        sound_filenames,
+    ):
+        """清理最新版已经不再使用的线上图片与音效。"""
+
+        deleted_images = (
+            self.cleanup_online_asset_directory(
+                ONLINE_IMAGE_DIR,
+                image_filenames,
+                {
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                    ".webp",
+                },
+            )
+        )
+        deleted_sounds = (
+            self.cleanup_online_asset_directory(
+                ONLINE_SOUND_DIR,
+                sound_filenames,
+                {".wav"},
+            )
+        )
+
+        return deleted_images, deleted_sounds
 
     def write_update_files(
         self,
@@ -2274,10 +2445,35 @@ class DesktopPet(QLabel):
             ):
                 self.update_used_backup = True
 
-            image_count = self.download_action_images(
-                actions_text,
+            core_image_filenames = (
+                self.core_image_filenames_from_version(
+                    version_data
+                )
+            )
+            action_image_filenames = (
+                self.action_filenames_from_text(
+                    actions_text
+                )
+            )
+            image_filenames = (
+                self.merge_unique_filenames(
+                    core_image_filenames,
+                    action_image_filenames,
+                )
+            )
+            sound_filenames = (
+                self.action_sound_filenames_from_text(
+                    actions_text
+                )
+            )
+
+            image_count = self.download_named_images(
+                image_filenames,
                 preferred_source,
             )
+
+            # 音效同步会先比较文件内容；
+            # 只有 WAV 真正变化时才释放对应播放器。
             sound_count = self.download_action_sounds(
                 actions_text,
                 preferred_source,
@@ -2288,6 +2484,13 @@ class DesktopPet(QLabel):
                 settings_text,
                 actions_text,
                 greetings_text,
+            )
+
+            deleted_images, deleted_sounds = (
+                self.cleanup_online_assets(
+                    image_filenames,
+                    sound_filenames,
+                )
             )
 
             self.reload_settings_and_messages()
@@ -2303,14 +2506,23 @@ class DesktopPet(QLabel):
                 for items in self.greetings.values()
             )
 
+            cleanup_text = ""
+
+            if deleted_images or deleted_sounds:
+                cleanup_text = (
+                    f"，已清理 {deleted_images} 张旧图片、"
+                    f"{deleted_sounds} 个旧音效"
+                )
+
             self.say(
                 "在线更新完成！"
                 f"版本 {version}，"
                 f"共 {len(self.messages)} 句台词，"
                 f"{greeting_count} 句问候，"
                 f"{len(self.actions)} 个动作，"
-                f"已同步 {image_count} 张动作图片，"
-                f"{sound_count} 个音效"
+                f"已同步 {image_count} 张图片，"
+                f"更新了 {sound_count} 个音效"
+                f"{cleanup_text}"
                 f"{route_text}。"
             )
 
@@ -2328,6 +2540,14 @@ class DesktopPet(QLabel):
                 "在线更新失败：",
                 repr(exc),
             )
+
+            # 更新失败时保留已经正常工作的播放器，
+            # 只补齐缺失的本地音效缓存。
+            try:
+                self.refresh_action_sound_cache()
+            except (OSError, RuntimeError):
+                pass
+
             self.say("检查更新失败，请稍后再试。")
 
         finally:
@@ -3232,20 +3452,99 @@ class DesktopPet(QLabel):
         self.sound_effects[filename] = effect
         return effect
 
-    def preload_action_sounds(self):
-        """预先加载动作音效，并只复用一个播放器。"""
+    def release_action_sound_cache(self):
+        """彻底释放 QSoundEffect 对 WAV 文件的占用。"""
 
         self.sound_cache_generation += 1
-        generation = self.sound_cache_generation
 
         for effect in self.iter_cached_sound_effects():
             try:
                 effect.stop()
+                effect.setSource(QUrl())
                 effect.deleteLater()
             except RuntimeError:
                 pass
 
         self.sound_effects = {}
+
+        if winsound is not None:
+            try:
+                winsound.PlaySound(None, 0)
+            except (RuntimeError, OSError):
+                pass
+
+        # 让 deleteLater / setSource 立即交还文件句柄，
+        # 避免 Windows 在更新 poke.wav 时仍占用旧文件。
+        QApplication.processEvents()
+
+    def discard_cached_sound_effect(self, filename):
+        """只释放指定音效的播放器。"""
+
+        effect = self.sound_effects.pop(
+            filename,
+            None,
+        )
+
+        if effect is None:
+            return
+
+        try:
+            effect.stop()
+            effect.setSource(QUrl())
+            effect.deleteLater()
+        except RuntimeError:
+            pass
+
+        QApplication.processEvents()
+
+    def refresh_action_sound_cache(self):
+        """保留仍然有效的播放器，只增删真正变化的音效。"""
+
+        desired_names = set(
+            self.referenced_action_sound_names()
+        )
+        cached_names = set(
+            self.sound_effects.keys()
+        )
+
+        # 删除 actions.json 已经不再引用的音效播放器。
+        for filename in (
+            cached_names - desired_names
+        ):
+            self.discard_cached_sound_effect(
+                filename
+            )
+
+        created_any = False
+
+        # 新增刚刚出现、或因文件替换而被释放的播放器。
+        for filename in desired_names:
+            if filename in self.sound_effects:
+                continue
+
+            effect = self.create_sound_effect(
+                filename
+            )
+
+            if effect is not None:
+                created_any = True
+
+        if created_any:
+            generation = self.sound_cache_generation
+            QTimer.singleShot(
+                180,
+                lambda current_generation=generation:
+                self.warm_action_sounds(
+                    20,
+                    current_generation,
+                ),
+            )
+
+    def preload_action_sounds(self):
+        """预先加载动作音效，并只复用一个播放器。"""
+
+        self.release_action_sound_cache()
+        generation = self.sound_cache_generation
 
         for filename in (
             self.referenced_action_sound_names()
@@ -3384,6 +3683,12 @@ class DesktopPet(QLabel):
         effect = self.get_ready_sound_effect(
             safe_name
         )
+
+        if effect is None:
+            # 缓存可能刚被在线更新释放；立即重建一次。
+            effect = self.create_sound_effect(
+                safe_name
+            )
 
         if effect is None:
             return self.play_sound_windows_fallback(
@@ -5278,7 +5583,13 @@ class DesktopPet(QLabel):
 
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(
-            QIcon(str(self.image_path("normal.PNG"))),
+            QIcon(
+                str(
+                    self.action_image_path(
+                        "normal.PNG"
+                    )
+                )
+            ),
             self,
         )
         self.tray_icon.setToolTip("果子")
@@ -5464,6 +5775,7 @@ class DesktopPet(QLabel):
                 self.drag_position = None
                 self.press_position = None
                 self.is_dragging = False
+                self.click_woke_from_sleep = False
                 event.accept()
                 return
 
@@ -5475,6 +5787,10 @@ class DesktopPet(QLabel):
                 )
 
             if self.state == "sleeping":
+                # 这一整次点击只负责把果子叫醒。
+                # wake_up() 会播放 wake.PNG 的醒来动画；
+                # 松开鼠标时不能再把同一次点击算成普通被戳。
+                self.click_woke_from_sleep = True
                 self.wake_up()
 
             self.stop_walk_timers()
@@ -5547,7 +5863,12 @@ class DesktopPet(QLabel):
                 event.accept()
                 return
 
-            if self.is_dragging:
+            if self.click_woke_from_sleep:
+                self.single_click_timer.stop()
+                self.click_woke_from_sleep = False
+                self.ignore_next_left_release = False
+
+            elif self.is_dragging:
                 self.single_click_timer.stop()
                 self.ignore_next_left_release = False
                 self.stop_drag_animation()
