@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 9,
   "actions": [
     {
       "name": "开心摇摆",
@@ -13,174 +13,80 @@
       "trigger": "both"
     },
     {
-      "name": "轻轻蹦一下",
-      "triggers": [
-        "manual",
-        "drag_release"
+      "name": "打招呼",
+      "frames": [
+        "hello1.PNG",
+        "hello2.PNG"
       ],
-      "steps": [
-        {
-          "type": "say",
-          "text": "嘿咻！"
-        },
-        {
-          "type": "jump",
-          "height": 24,
-          "duration": 700,
-          "repeats": 1
-        },
-        {
-          "type": "frames",
-          "frames": [
-            "happy.PNG",
-            "normal.PNG"
-          ],
-          "frame_interval": 220,
-          "loops": 1,
-          "playback": "loop"
-        }
-      ]
+      "frame_interval": 200,
+      "loops": 4,
+      "speech": "在这里耶！",
+      "trigger": "manual"
     },
     {
-      "name": "睡醒啦",
-      "triggers": [
-        "wake"
+      "name": "轻轻戳一下",
+      "frames": [
+        "poke1-1.PNG",
+        "poke1-2.PNG"
       ],
-      "steps": [
-        {
-          "type": "say",
-          "texts": [
-            "睡醒啦！",
-            "果子醒来啦。",
-            "又精神了耶！"
-          ]
-        },
-        {
-          "type": "frames",
-          "frames": [
-            "happy.PNG",
-            "normal.PNG"
-          ],
-          "frame_interval": 240,
-          "loops": 2,
-          "playback": "loop"
-        }
-      ]
+      "frame_interval": 120,
+      "loops": 1,
+      "speech": "唔呀！",
+      "trigger": "manual"
     },
     {
-      "name": "启动见面",
-      "triggers": [
-        "startup"
+      "name": "还戳呀",
+      "frames": [
+        "poke2-1.PNG",
+        "poke2-2.PNG"
       ],
-      "steps": [
-        {
-          "type": "say",
-          "texts": [
-            "果子来啦！",
-            "又见面啦！",
-            "我来陪你啦。"
-          ]
-        },
-        {
-          "type": "jump",
-          "height": 18,
-          "duration": 600,
-          "repeats": 1
-        }
-      ]
+      "frame_interval": 120,
+      "loops": 1,
+      "speech": "你怎么还戳呀！",
+      "trigger": "manual"
     },
     {
-      "name": "被戳反应",
-      "triggers": [
-        "single_click"
+      "name": "戳炸毛了",
+      "frames": [
+        "poke3-1.PNG",
+        "poke3-2.PNG"
       ],
-      "steps": [
-        {
-          "type": "sound",
-          "file": "poke.wav"
-        },
-        {
-          "type": "say",
-          "texts": [
-            "你戳到我啦！",
-            "哎呀！",
-            "怎么啦？"
-          ]
-        },
-        {
-          "type": "frames",
-          "frames": [
-            "poke1.PNG",
-            "poke2.PNG"
-          ],
-          "frame_interval": 170,
-          "loops": 1,
-          "playback": "loop"
-        }
-      ]
+      "frame_interval": 120,
+      "loops": 1,
+      "speech": "豚鼠要罢工了！",
+      "trigger": "manual"
     },
     {
-      "name": "连续戳三次",
-      "triggers": [
-        "triple_click"
+      "name": "向左跑",
+      "frames": [
+        "runleft1.PNG",
+        "runleft2.PNG"
       ],
-      "steps": [
-        {
-          "type": "sound",
-          "file": "poke.wav"
-        },
-        {
-          "type": "say",
-          "text": "你怎么还戳呀！"
-        },
-        {
-          "type": "frames",
-          "frames": [
-            "poke1.PNG",
-            "poke2.PNG"
-          ],
-          "frame_interval": 150,
-          "loops": 1,
-          "playback": "loop"
-        },
-        {
-          "type": "shake",
-          "distance": 6,
-          "duration": 420,
-          "cycles": 6
-        }
-      ]
+      "frame_interval": 90,
+      "loops": 6,
+      "speech": "",
+      "trigger": "manual"
     },
     {
-      "name": "连续戳五次",
-      "triggers": [
-        "five_click"
+      "name": "向右跑",
+      "frames": [
+        "runright1.PNG",
+        "runright2.PNG"
       ],
-      "steps": [
-        {
-          "type": "sound",
-          "file": "poke.wav"
-        },
-        {
-          "type": "say",
-          "text": "还戳！我跑啦！"
-        },
-        {
-          "type": "frames",
-          "frames": [
-            "poke1.PNG",
-            "poke2.PNG"
-          ],
-          "frame_interval": 130,
-          "loops": 1,
-          "playback": "loop"
-        },
-        {
-          "type": "move_away_mouse",
-          "distance": 260,
-          "duration": 650
-        }
-      ]
+      "frame_interval": 90,
+      "loops": 6,
+      "speech": "",
+      "trigger": "manual"
+    },
+    {
+      "name": "醒来",
+      "frames": [
+        "wake.PNG"
+      ],
+      "frame_interval": 180,
+      "loops": 1,
+      "speech": "耶嘿！",
+      "trigger": "manual"
     }
   ]
 }
