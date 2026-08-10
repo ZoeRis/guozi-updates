@@ -1594,7 +1594,7 @@ class DesktopPet(QLabel):
             self.load_settings()
             self.load_messages()
             self.load_actions()
-            self.preload_action_sounds()
+            self.refresh_action_sound_cache()
             self.load_greetings()
             self.load_all_images()
             self.apply_timer_settings()
@@ -2086,7 +2086,7 @@ class DesktopPet(QLabel):
         actions_text,
         preferred_source=0,
     ):
-        """下载 actions.json 引用的全部 WAV 音效。"""
+        """同步 actions.json 引用的 WAV；未变化的文件不碰播放器。"""
 
         filenames = (
             self.action_sound_filenames_from_text(
@@ -2102,7 +2102,7 @@ class DesktopPet(QLabel):
             exist_ok=True,
         )
 
-        downloaded_count = 0
+        changed_count = 0
 
         for filename in filenames:
             encoded_name = urllib.parse.quote(
@@ -2135,7 +2135,9 @@ class DesktopPet(QLabel):
                 ONLINE_SOUND_DIR
                 / f"{filename}.new"
             )
-            final_path = ONLINE_SOUND_DIR / filename
+            final_path = (
+                ONLINE_SOUND_DIR / filename
+            )
 
             temp_path.write_bytes(sound_data)
 
@@ -2166,10 +2168,35 @@ class DesktopPet(QLabel):
                     f"动作音效无法读取：{filename}"
                 ) from error
 
-            temp_path.replace(final_path)
-            downloaded_count += 1
+            # GitHub 上的 WAV 与本地完全一样时：
+            # 不替换文件，也不重建 QSoundEffect。
+            unchanged = False
 
-        return downloaded_count
+            if final_path.exists():
+                try:
+                    unchanged = (
+                        final_path.read_bytes()
+                        == sound_data
+                    )
+                except OSError:
+                    unchanged = False
+
+            if unchanged:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+                continue
+
+            # 只有真正换音效时才释放该 WAV 的播放器。
+            self.discard_cached_sound_effect(
+                filename
+            )
+
+            temp_path.replace(final_path)
+            changed_count += 1
+
+        return changed_count
 
     def cleanup_online_asset_directory(
         self,
@@ -2445,10 +2472,8 @@ class DesktopPet(QLabel):
                 preferred_source,
             )
 
-            # Windows 下 QSoundEffect 可能仍持有 poke.wav。
-            # 先彻底释放播放器，再覆盖线上音效文件。
-            self.release_action_sound_cache()
-
+            # 音效同步会先比较文件内容；
+            # 只有 WAV 真正变化时才释放对应播放器。
             sound_count = self.download_action_sounds(
                 actions_text,
                 preferred_source,
@@ -2496,7 +2521,7 @@ class DesktopPet(QLabel):
                 f"{greeting_count} 句问候，"
                 f"{len(self.actions)} 个动作，"
                 f"已同步 {image_count} 张图片，"
-                f"{sound_count} 个音效"
+                f"更新了 {sound_count} 个音效"
                 f"{cleanup_text}"
                 f"{route_text}。"
             )
@@ -2516,10 +2541,10 @@ class DesktopPet(QLabel):
                 repr(exc),
             )
 
-            # 如果失败发生在“释放音效缓存”之后，
-            # 立即重新装载磁盘上最后一份可用 WAV。
+            # 更新失败时保留已经正常工作的播放器，
+            # 只补齐缺失的本地音效缓存。
             try:
-                self.preload_action_sounds()
+                self.refresh_action_sound_cache()
             except (OSError, RuntimeError):
                 pass
 
@@ -3451,6 +3476,69 @@ class DesktopPet(QLabel):
         # 让 deleteLater / setSource 立即交还文件句柄，
         # 避免 Windows 在更新 poke.wav 时仍占用旧文件。
         QApplication.processEvents()
+
+    def discard_cached_sound_effect(self, filename):
+        """只释放指定音效的播放器。"""
+
+        effect = self.sound_effects.pop(
+            filename,
+            None,
+        )
+
+        if effect is None:
+            return
+
+        try:
+            effect.stop()
+            effect.setSource(QUrl())
+            effect.deleteLater()
+        except RuntimeError:
+            pass
+
+        QApplication.processEvents()
+
+    def refresh_action_sound_cache(self):
+        """保留仍然有效的播放器，只增删真正变化的音效。"""
+
+        desired_names = set(
+            self.referenced_action_sound_names()
+        )
+        cached_names = set(
+            self.sound_effects.keys()
+        )
+
+        # 删除 actions.json 已经不再引用的音效播放器。
+        for filename in (
+            cached_names - desired_names
+        ):
+            self.discard_cached_sound_effect(
+                filename
+            )
+
+        created_any = False
+
+        # 新增刚刚出现、或因文件替换而被释放的播放器。
+        for filename in desired_names:
+            if filename in self.sound_effects:
+                continue
+
+            effect = self.create_sound_effect(
+                filename
+            )
+
+            if effect is not None:
+                created_any = True
+
+        if created_any:
+            generation = self.sound_cache_generation
+            QTimer.singleShot(
+                180,
+                lambda current_generation=generation:
+                self.warm_action_sounds(
+                    20,
+                    current_generation,
+                ),
+            )
 
     def preload_action_sounds(self):
         """预先加载动作音效，并只复用一个播放器。"""
