@@ -1,6 +1,6 @@
 {
-  "version": "2.5",
-  "app_version": 6,
+  "version": "2.6",
+  "app_version": 7,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
