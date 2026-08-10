@@ -59,6 +59,26 @@ ACTIONS_FILE = APP_DIR / "actions.json"
 GREETINGS_FILE = APP_DIR / "greetings.json"
 ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
+DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
+
+
+def debug_log(message):
+    """写入轻量诊断日志；失败时不影响果子运行。"""
+
+    try:
+        timestamp = datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        with DEBUG_LOG_FILE.open(
+            "a",
+            encoding="utf-8",
+        ) as file:
+            file.write(
+                f"[{timestamp}] {message}\n"
+            )
+    except OSError:
+        pass
+
 RAW_REPO_BASE_URL = (
     "https://raw.githubusercontent.com/"
     "ZoeRis/guozi-updates/main/"
@@ -233,6 +253,7 @@ class SpeechBubble(QWidget):
 
     def __init__(self):
         super().__init__()
+        debug_log("DesktopPet init")
 
         self.text = ""
 
@@ -1583,6 +1604,11 @@ class DesktopPet(QLabel):
     def reload_settings_and_messages(self):
         """重新载入，并保持果子的位置不漂移。"""
 
+        debug_log(
+            f"reload start state={self.state} "
+            f"dragging={self.is_dragging}"
+        )
+
         old_x = self.x()
         old_y = self.y()
         old_width = self.width()
@@ -1638,6 +1664,10 @@ class DesktopPet(QLabel):
         if not self.walking_paused:
             self.schedule_walk()
 
+        debug_log(
+            f"reload end state={self.state} "
+            f"dragging={self.is_dragging}"
+        )
         self.say("设置、台词和动作已重新载入。")
 
     def download_text(self, url):
@@ -2377,6 +2407,10 @@ class DesktopPet(QLabel):
     def check_online_updates(self):
         """通过主线路或备用线路同步在线内容。"""
 
+        debug_log(
+            f"update start state={self.state} "
+            f"dragging={self.is_dragging}"
+        )
         self.say("正在检查在线更新……")
         QApplication.processEvents()
         self.update_used_backup = False
@@ -3666,6 +3700,11 @@ class DesktopPet(QLabel):
     ):
         """稳定播放短 WAV 音效。"""
 
+        debug_log(
+            f"sound request file={filename!r} "
+            f"attempts={attempts_left}"
+        )
+
         safe_name = (
             self.sanitize_action_sound_filename(
                 filename
@@ -3678,6 +3717,9 @@ class DesktopPet(QLabel):
         sound_path = ONLINE_SOUND_DIR / safe_name
 
         if not sound_path.exists():
+            debug_log(
+                f"sound missing path={sound_path}"
+            )
             return False
 
         effect = self.get_ready_sound_effect(
@@ -3696,6 +3738,18 @@ class DesktopPet(QLabel):
             )
 
         try:
+            try:
+                debug_log(
+                    "sound effect before "
+                    f"loaded={effect.isLoaded()} "
+                    f"playing={effect.isPlaying()} "
+                    f"status={effect.status()}"
+                )
+            except RuntimeError:
+                debug_log(
+                    "sound effect before RuntimeError"
+                )
+
             if not effect.isLoaded():
                 if attempts_left > 0:
                     QTimer.singleShot(
@@ -3720,6 +3774,18 @@ class DesktopPet(QLabel):
 
             effect.setMuted(False)
             effect.play()
+
+            try:
+                debug_log(
+                    "sound effect after play "
+                    f"loaded={effect.isLoaded()} "
+                    f"playing={effect.isPlaying()} "
+                    f"status={effect.status()}"
+                )
+            except RuntimeError:
+                debug_log(
+                    "sound effect after play RuntimeError"
+                )
 
             QTimer.singleShot(
                 70,
@@ -3749,6 +3815,13 @@ class DesktopPet(QLabel):
         """音效后端异常时重建播放器并用 Windows 补播一次。"""
 
         try:
+            debug_log(
+                "sound verify "
+                f"file={filename} "
+                f"loaded={effect.isLoaded()} "
+                f"playing={effect.isPlaying()} "
+                f"status={effect.status()}"
+            )
             if (
                 effect.status()
                 == QSoundEffect.Status.Error
@@ -3784,6 +3857,9 @@ class DesktopPet(QLabel):
                 winsound.SND_FILENAME
                 | winsound.SND_ASYNC
                 | winsound.SND_NODEFAULT,
+            )
+            debug_log(
+                f"winsound fallback started path={sound_path}"
             )
             return True
 
@@ -3831,6 +3907,12 @@ class DesktopPet(QLabel):
         trigger_name=None,
     ):
         """播放由多个安全步骤组成的线上动作。"""
+
+        debug_log(
+            f"custom action start "
+            f"name={action.get('name') if isinstance(action, dict) else None} "
+            f"trigger={trigger_name} state={self.state}"
+        )
 
         if not isinstance(action, dict):
             return
@@ -4363,6 +4445,12 @@ class DesktopPet(QLabel):
         completed=False,
     ):
         """停止线上动作并恢复普通状态。"""
+
+        debug_log(
+            f"custom action stop state={self.state} "
+            f"trigger={self.active_custom_action_trigger} "
+            f"resume={resume} completed={completed}"
+        )
 
         finished_trigger = (
             self.active_custom_action_trigger
@@ -5261,6 +5349,9 @@ class DesktopPet(QLabel):
     def start_drag_animation(self, cursor_position):
         """开始拖动，并把鼠标对准拖动图的固定抓取点。"""
 
+        debug_log(
+            f"start_drag_animation previous_state={self.state}"
+        )
         self.single_click_timer.stop()
         self.happy_timer.stop()
         self.blink_wait_timer.stop()
@@ -5504,6 +5595,10 @@ class DesktopPet(QLabel):
         )
 
     def wake_up(self):
+        debug_log(
+            f"wake_up called state={self.state}"
+        )
+
         if self.state != "sleeping":
             return
 
@@ -5771,7 +5866,14 @@ class DesktopPet(QLabel):
             event.button()
             == Qt.MouseButton.LeftButton
         ):
+            debug_log(
+                f"mouse press state={self.state} "
+                f"poke_locked={self.poke_input_locked}"
+            )
             if self.poke_input_locked:
+                debug_log(
+                    "mouse press blocked by poke lock"
+                )
                 self.drag_position = None
                 self.press_position = None
                 self.is_dragging = False
@@ -5834,6 +5936,9 @@ class DesktopPet(QLabel):
                 ).manhattanLength() > 5
             ):
                 self.is_dragging = True
+                debug_log(
+                    f"drag start from state={self.state}"
+                )
                 self.start_drag_animation(
                     current
                 )
@@ -5854,6 +5959,11 @@ class DesktopPet(QLabel):
             event.button()
             == Qt.MouseButton.LeftButton
         ):
+            debug_log(
+                f"mouse release state={self.state} "
+                f"dragging={self.is_dragging} "
+                f"woke={self.click_woke_from_sleep}"
+            )
             if self.poke_input_locked:
                 self.single_click_timer.stop()
                 self.drag_position = None
@@ -6082,6 +6192,7 @@ class DesktopPet(QLabel):
 
 
 def main():
+    debug_log("=== process start ===")
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
 
