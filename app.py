@@ -494,6 +494,7 @@ class DesktopPet(QLabel):
         self.press_position = None
         self.is_dragging = False
         self.ignore_next_left_release = False
+        self.click_woke_from_sleep = False
 
         # drag1.PNG / drag2.PNG 的固定抓取点。
         # 原图约为 (527, 56) / 1000×1000。
@@ -2443,6 +2444,11 @@ class DesktopPet(QLabel):
                 image_filenames,
                 preferred_source,
             )
+
+            # Windows 下 QSoundEffect 可能仍持有 poke.wav。
+            # 先彻底释放播放器，再覆盖线上音效文件。
+            self.release_action_sound_cache()
+
             sound_count = self.download_action_sounds(
                 actions_text,
                 preferred_source,
@@ -2509,6 +2515,14 @@ class DesktopPet(QLabel):
                 "在线更新失败：",
                 repr(exc),
             )
+
+            # 如果失败发生在“释放音效缓存”之后，
+            # 立即重新装载磁盘上最后一份可用 WAV。
+            try:
+                self.preload_action_sounds()
+            except (OSError, RuntimeError):
+                pass
+
             self.say("检查更新失败，请稍后再试。")
 
         finally:
@@ -3413,20 +3427,36 @@ class DesktopPet(QLabel):
         self.sound_effects[filename] = effect
         return effect
 
-    def preload_action_sounds(self):
-        """预先加载动作音效，并只复用一个播放器。"""
+    def release_action_sound_cache(self):
+        """彻底释放 QSoundEffect 对 WAV 文件的占用。"""
 
         self.sound_cache_generation += 1
-        generation = self.sound_cache_generation
 
         for effect in self.iter_cached_sound_effects():
             try:
                 effect.stop()
+                effect.setSource(QUrl())
                 effect.deleteLater()
             except RuntimeError:
                 pass
 
         self.sound_effects = {}
+
+        if winsound is not None:
+            try:
+                winsound.PlaySound(None, 0)
+            except (RuntimeError, OSError):
+                pass
+
+        # 让 deleteLater / setSource 立即交还文件句柄，
+        # 避免 Windows 在更新 poke.wav 时仍占用旧文件。
+        QApplication.processEvents()
+
+    def preload_action_sounds(self):
+        """预先加载动作音效，并只复用一个播放器。"""
+
+        self.release_action_sound_cache()
+        generation = self.sound_cache_generation
 
         for filename in (
             self.referenced_action_sound_names()
@@ -3565,6 +3595,12 @@ class DesktopPet(QLabel):
         effect = self.get_ready_sound_effect(
             safe_name
         )
+
+        if effect is None:
+            # 缓存可能刚被在线更新释放；立即重建一次。
+            effect = self.create_sound_effect(
+                safe_name
+            )
 
         if effect is None:
             return self.play_sound_windows_fallback(
@@ -5651,6 +5687,7 @@ class DesktopPet(QLabel):
                 self.drag_position = None
                 self.press_position = None
                 self.is_dragging = False
+                self.click_woke_from_sleep = False
                 event.accept()
                 return
 
@@ -5662,6 +5699,10 @@ class DesktopPet(QLabel):
                 )
 
             if self.state == "sleeping":
+                # 这一整次点击只负责把果子叫醒。
+                # wake_up() 会播放 wake.PNG 的醒来动画；
+                # 松开鼠标时不能再把同一次点击算成普通被戳。
+                self.click_woke_from_sleep = True
                 self.wake_up()
 
             self.stop_walk_timers()
@@ -5734,7 +5775,12 @@ class DesktopPet(QLabel):
                 event.accept()
                 return
 
-            if self.is_dragging:
+            if self.click_woke_from_sleep:
+                self.single_click_timer.stop()
+                self.click_woke_from_sleep = False
+                self.ignore_next_left_release = False
+
+            elif self.is_dragging:
                 self.single_click_timer.stop()
                 self.ignore_next_left_release = False
                 self.stop_drag_animation()
