@@ -5,6 +5,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -19,7 +20,7 @@ except ImportError:
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, QUrl
+from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QSoundEffect
 from PySide6.QtGui import (
     QAction,
@@ -441,10 +442,16 @@ class SleepZzzWidget(QWidget):
 
 class DesktopPet(QLabel):
 
+    online_update_ready = Signal(object)
+    online_update_failed = Signal(str)
+
     def __init__(self):
         super().__init__()
 
         # ---------- 基础数据 ----------
+
+        self.update_in_progress = False
+        self.update_used_backup = False
 
         self.settings = {}
         self.messages = []
@@ -495,6 +502,14 @@ class DesktopPet(QLabel):
         self.is_dragging = False
         self.ignore_next_left_release = False
         self.click_woke_from_sleep = False
+
+        self.drag_preserve_visual = False
+        self.drag_preserved_state = None
+        self.drag_custom_action_was_paused = False
+        self.drag_custom_action_pause_started = None
+        self.drag_walk_move_was_active = False
+        self.drag_walk_animation_was_active = False
+        self.drag_bounce_was_active = False
 
         # drag1.PNG / drag2.PNG 的固定抓取点。
         # 原图约为 (527, 56) / 1000×1000。
@@ -552,6 +567,13 @@ class DesktopPet(QLabel):
 
         self.speech_bubble = SpeechBubble()
         self.sleep_zzz = SleepZzzWidget()
+
+        self.online_update_ready.connect(
+            self.apply_online_update_package
+        )
+        self.online_update_failed.connect(
+            self.finish_online_update_failure
+        )
 
         self.speech_hide_timer = QTimer(self)
         self.speech_hide_timer.setSingleShot(True)
@@ -2374,14 +2396,12 @@ class DesktopPet(QLabel):
         actions_temp.replace(ACTIONS_FILE)
         greetings_temp.replace(GREETINGS_FILE)
 
-    def check_online_updates(self):
-        """通过主线路或备用线路同步在线内容。"""
-
-        self.say("正在检查在线更新……")
-        QApplication.processEvents()
-        self.update_used_backup = False
+    def fetch_online_update_package(self):
+        """后台线程只负责网络下载，不触碰 Qt 界面。"""
 
         try:
+            used_backup = False
+
             version_text, preferred_source = (
                 self.download_text_from_sources(
                     UPDATE_INFO_URLS
@@ -2389,7 +2409,7 @@ class DesktopPet(QLabel):
             )
 
             if preferred_source == 1:
-                self.update_used_backup = True
+                used_backup = True
 
             version_data = json.loads(version_text)
 
@@ -2399,6 +2419,7 @@ class DesktopPet(QLabel):
             version = str(
                 version_data.get("version", "未知")
             )
+
             messages_urls = self.trusted_file_candidates(
                 version_data["messages_url"]
             )
@@ -2443,7 +2464,7 @@ class DesktopPet(QLabel):
                 actions_source,
                 greetings_source,
             ):
-                self.update_used_backup = True
+                used_backup = True
 
             core_image_filenames = (
                 self.core_image_filenames_from_version(
@@ -2467,39 +2488,247 @@ class DesktopPet(QLabel):
                 )
             )
 
-            image_count = self.download_named_images(
-                image_filenames,
-                preferred_source,
+            image_data = {}
+
+            for filename in image_filenames:
+                encoded_name = urllib.parse.quote(
+                    filename,
+                    safe="",
+                )
+                urls = (
+                    RAW_REPO_BASE_URL
+                    + "images/"
+                    + encoded_name,
+                    CDN_REPO_BASE_URL
+                    + "images/"
+                    + encoded_name,
+                )
+                data, source_index = (
+                    self.download_bytes_from_sources(
+                        urls,
+                        preferred_source,
+                    )
+                )
+
+                if source_index == 1:
+                    used_backup = True
+
+                image_data[filename] = data
+
+            sound_data = {}
+
+            for filename in sound_filenames:
+                encoded_name = urllib.parse.quote(
+                    filename,
+                    safe="",
+                )
+                urls = (
+                    RAW_REPO_BASE_URL
+                    + "sounds/"
+                    + encoded_name,
+                    CDN_REPO_BASE_URL
+                    + "sounds/"
+                    + encoded_name,
+                )
+                data, source_index = (
+                    self.download_bytes_from_sources(
+                        urls,
+                        preferred_source,
+                    )
+                )
+
+                if len(data) > MAX_ACTION_SOUND_BYTES:
+                    raise ValueError("动作音效文件过大。")
+
+                if source_index == 1:
+                    used_backup = True
+
+                sound_data[filename] = data
+
+            self.online_update_ready.emit(
+                {
+                    "version": version,
+                    "messages_text": messages_text,
+                    "settings_text": settings_text,
+                    "actions_text": actions_text,
+                    "greetings_text": greetings_text,
+                    "image_filenames": image_filenames,
+                    "sound_filenames": sound_filenames,
+                    "image_data": image_data,
+                    "sound_data": sound_data,
+                    "used_backup": used_backup,
+                }
             )
 
-            # 音效同步会先比较文件内容；
-            # 只有 WAV 真正变化时才释放对应播放器。
-            sound_count = self.download_action_sounds(
-                actions_text,
-                preferred_source,
+        except Exception as exc:
+            self.online_update_failed.emit(
+                repr(exc)
+            )
+
+    def apply_downloaded_image_data(
+        self,
+        image_data,
+    ):
+        """在主线程验证并替换已经下载完成的图片。"""
+
+        ONLINE_IMAGE_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        synced_count = 0
+
+        for filename, data in image_data.items():
+            safe_name = self.sanitize_action_filename(
+                filename
+            )
+
+            if safe_name is None:
+                raise ValueError("图片文件名不安全。")
+
+            test_pixmap = QPixmap()
+            test_pixmap.loadFromData(data)
+
+            if test_pixmap.isNull():
+                raise ValueError(
+                    f"图片无法读取：{safe_name}"
+                )
+
+            temp_path = (
+                ONLINE_IMAGE_DIR
+                / f"{safe_name}.new"
+            )
+            final_path = (
+                ONLINE_IMAGE_DIR / safe_name
+            )
+
+            temp_path.write_bytes(data)
+            temp_path.replace(final_path)
+            synced_count += 1
+
+        return synced_count
+
+    def apply_downloaded_sound_data(
+        self,
+        sound_data,
+    ):
+        """只替换真正变化的 WAV。"""
+
+        ONLINE_SOUND_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        changed_count = 0
+
+        for filename, data in sound_data.items():
+            safe_name = (
+                self.sanitize_action_sound_filename(
+                    filename
+                )
+            )
+
+            if safe_name is None:
+                raise ValueError(
+                    "动作音效文件名不安全。"
+                )
+
+            temp_path = (
+                ONLINE_SOUND_DIR
+                / f"{safe_name}.new"
+            )
+            final_path = (
+                ONLINE_SOUND_DIR / safe_name
+            )
+
+            temp_path.write_bytes(data)
+
+            try:
+                with wave.open(
+                    str(temp_path),
+                    "rb",
+                ) as wav_file:
+                    if (
+                        wav_file.getnchannels() < 1
+                        or wav_file.getframerate() < 1
+                        or wav_file.getnframes() < 1
+                    ):
+                        raise ValueError(
+                            "动作音效内容为空。"
+                        )
+            except (
+                wave.Error,
+                EOFError,
+                OSError,
+            ) as error:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+                raise ValueError(
+                    f"动作音效无法读取：{safe_name}"
+                ) from error
+
+            unchanged = False
+
+            if final_path.exists():
+                try:
+                    unchanged = (
+                        final_path.read_bytes()
+                        == data
+                    )
+                except OSError:
+                    unchanged = False
+
+            if unchanged:
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+                continue
+
+            self.discard_cached_sound_effect(
+                safe_name
+            )
+            temp_path.replace(final_path)
+            changed_count += 1
+
+        return changed_count
+
+    def apply_online_update_package(self, package):
+        """网络完成后，在主线程应用更新。"""
+
+        try:
+            self.update_used_backup = bool(
+                package.get("used_backup", False)
+            )
+
+            image_count = (
+                self.apply_downloaded_image_data(
+                    package["image_data"]
+                )
+            )
+            sound_count = (
+                self.apply_downloaded_sound_data(
+                    package["sound_data"]
+                )
             )
 
             self.write_update_files(
-                messages_text,
-                settings_text,
-                actions_text,
-                greetings_text,
+                package["messages_text"],
+                package["settings_text"],
+                package["actions_text"],
+                package["greetings_text"],
             )
 
             deleted_images, deleted_sounds = (
                 self.cleanup_online_assets(
-                    image_filenames,
-                    sound_filenames,
+                    package["image_filenames"],
+                    package["sound_filenames"],
                 )
             )
 
             self.reload_settings_and_messages()
-
-            route_text = (
-                "，已使用备用线路"
-                if self.update_used_backup
-                else ""
-            )
 
             greeting_count = sum(
                 len(items)
@@ -2514,9 +2743,15 @@ class DesktopPet(QLabel):
                     f"{deleted_sounds} 个旧音效"
                 )
 
+            route_text = (
+                "，已使用备用线路"
+                if self.update_used_backup
+                else ""
+            )
+
             self.say(
                 "在线更新完成！"
-                f"版本 {version}，"
+                f"版本 {package['version']}，"
                 f"共 {len(self.messages)} 句台词，"
                 f"{greeting_count} 句问候，"
                 f"{len(self.actions)} 个动作，"
@@ -2526,23 +2761,12 @@ class DesktopPet(QLabel):
                 f"{route_text}。"
             )
 
-        except (
-            OSError,
-            UnicodeDecodeError,
-            ValueError,
-            KeyError,
-            TypeError,
-            json.JSONDecodeError,
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-        ) as exc:
+        except Exception as exc:
             print(
-                "在线更新失败：",
+                "在线更新应用失败：",
                 repr(exc),
             )
 
-            # 更新失败时保留已经正常工作的播放器，
-            # 只补齐缺失的本地音效缓存。
             try:
                 self.refresh_action_sound_cache()
             except (OSError, RuntimeError):
@@ -2551,9 +2775,34 @@ class DesktopPet(QLabel):
             self.say("检查更新失败，请稍后再试。")
 
         finally:
-            # 启动问候已经在程序出现时与 happy 动画同时播放，
-            # 更新结束后不再追加第二套开机动画或问候。
-            pass
+            self.update_in_progress = False
+
+    def finish_online_update_failure(self, error_text):
+        """后台下载失败后恢复更新按钮。"""
+
+        print(
+            "在线更新失败：",
+            error_text,
+        )
+        self.update_in_progress = False
+        self.say("检查更新失败，请稍后再试。")
+
+    def check_online_updates(self):
+        """后台检查更新，下载期间果子仍然可以拖动。"""
+
+        if self.update_in_progress:
+            self.say("正在检查在线更新……")
+            return
+
+        self.update_in_progress = True
+        self.say("正在检查在线更新……")
+
+        worker = threading.Thread(
+            target=self.fetch_online_update_package,
+            daemon=True,
+        )
+        worker.start()
+
 
     def open_file(self, path):
         try:
@@ -5244,6 +5493,109 @@ class DesktopPet(QLabel):
 
     # ---------- 拖动动画 ----------
 
+    def begin_preserved_drag(self):
+        """拖动时保留当前动画，不切换拖动图。"""
+
+        self.drag_preserve_visual = True
+        self.drag_preserved_state = self.state
+
+        if self.state == "custom_action":
+            self.drag_custom_action_was_paused = (
+                self.custom_action_timer.isActive()
+            )
+
+            if self.drag_custom_action_was_paused:
+                self.drag_custom_action_pause_started = (
+                    time.monotonic()
+                )
+                self.custom_action_timer.stop()
+
+        if self.state == "walking":
+            self.drag_walk_move_was_active = (
+                self.walk_move_timer.isActive()
+            )
+            self.drag_walk_animation_was_active = (
+                self.walk_animation_timer.isActive()
+            )
+            self.walk_move_timer.stop()
+            self.walk_animation_timer.stop()
+
+        if self.state == "bouncing":
+            self.drag_bounce_was_active = (
+                self.bounce_timer.isActive()
+            )
+            self.bounce_timer.stop()
+
+    def rebase_preserved_motion(self, delta):
+        """手动拖动后同步平移原动作的位置基准。"""
+
+        if delta.isNull():
+            return
+
+        if self.drag_preserved_state == "custom_action":
+            if self.custom_action_step_start is not None:
+                self.custom_action_step_start += delta
+
+            if self.custom_action_step_target is not None:
+                self.custom_action_step_target += delta
+
+            if self.custom_action_origin is not None:
+                self.custom_action_origin += delta
+
+        if self.drag_preserved_state == "walking":
+            self.walk_float_x += delta.x()
+            self.walk_float_y += delta.y()
+            self.walk_target_x += delta.x()
+            self.walk_target_y += delta.y()
+
+        if (
+            self.drag_preserved_state == "bouncing"
+            and self.bounce_base_position is not None
+        ):
+            self.bounce_base_position += delta
+
+    def finish_preserved_drag(self):
+        """松手后继续原动作，不追加拖动动画或回弹。"""
+
+        if (
+            self.drag_preserved_state == "custom_action"
+            and self.drag_custom_action_was_paused
+        ):
+            if (
+                self.drag_custom_action_pause_started
+                is not None
+                and self.custom_action_step_started
+            ):
+                self.custom_action_step_started += (
+                    time.monotonic()
+                    - self.drag_custom_action_pause_started
+                )
+
+            self.custom_action_timer.start()
+
+        if self.drag_preserved_state == "walking":
+            if self.drag_walk_animation_was_active:
+                self.walk_animation_timer.start()
+
+            if self.drag_walk_move_was_active:
+                self.walk_move_timer.start()
+
+        if (
+            self.drag_preserved_state == "bouncing"
+            and self.drag_bounce_was_active
+        ):
+            self.bounce_timer.start()
+
+        self.drag_preserve_visual = False
+        self.drag_preserved_state = None
+        self.drag_custom_action_was_paused = False
+        self.drag_custom_action_pause_started = None
+        self.drag_walk_move_was_active = False
+        self.drag_walk_animation_was_active = False
+        self.drag_bounce_was_active = False
+
+        self.save_position()
+
     def drag_grab_offset(self):
         """返回拖动图中被鼠标抓住的位置。"""
 
@@ -5266,11 +5618,6 @@ class DesktopPet(QLabel):
         self.blink_wait_timer.stop()
         self.blink_close_timer.stop()
         self.sleep_wait_timer.stop()
-
-        if self.state == "sleeping":
-            self.sleep_duration_timer.stop()
-            self.sleep_animation_timer.stop()
-            self.sleep_zzz.stop_animation()
 
         self.state = "dragging"
         self.drag_frame_index = 0
@@ -5771,39 +6118,7 @@ class DesktopPet(QLabel):
             event.button()
             == Qt.MouseButton.LeftButton
         ):
-            if self.poke_input_locked:
-                self.drag_position = None
-                self.press_position = None
-                self.is_dragging = False
-                self.click_woke_from_sleep = False
-                event.accept()
-                return
-
-            self.cancel_release_bounce()
-
-            if self.state == "custom_action":
-                self.stop_custom_action(
-                    resume=False
-                )
-
-            if self.state == "sleeping":
-                # 这一整次点击只负责把果子叫醒。
-                # wake_up() 会播放 wake.PNG 的醒来动画；
-                # 松开鼠标时不能再把同一次点击算成普通被戳。
-                self.click_woke_from_sleep = True
-                self.wake_up()
-
-            self.stop_walk_timers()
-            self.blink_wait_timer.stop()
-            self.blink_close_timer.stop()
-            self.sleep_wait_timer.stop()
-
-            if self.state in (
-                "walking",
-                "blinking",
-            ):
-                self.state = "normal"
-                self.setPixmap(self.normal)
+            self.click_woke_from_sleep = False
 
             self.press_position = (
                 event.globalPosition().toPoint()
@@ -5834,18 +6149,45 @@ class DesktopPet(QLabel):
                 ).manhattanLength() > 5
             ):
                 self.is_dragging = True
-                self.start_drag_animation(
-                    current
-                )
+
+                if self.state == "normal":
+                    self.cancel_release_bounce()
+                    self.stop_walk_timers()
+                    self.blink_wait_timer.stop()
+                    self.blink_close_timer.stop()
+                    self.sleep_wait_timer.stop()
+
+                    self.start_drag_animation(
+                        current
+                    )
+                else:
+                    # 其它动画正在播时，窗口照样能拖，
+                    # 但画面保持原动作，不换成 drag1/drag2。
+                    self.begin_preserved_drag()
 
             if self.is_dragging:
                 target = (
                     current - self.drag_position
                 )
+
+                old_position = QPoint(
+                    self.x(),
+                    self.y(),
+                )
+
                 self.move_to_safe_position(
                     target.x(),
                     target.y(),
                 )
+
+                if self.drag_preserve_visual:
+                    new_position = QPoint(
+                        self.x(),
+                        self.y(),
+                    )
+                    self.rebase_preserved_motion(
+                        new_position - old_position
+                    )
 
             event.accept()
 
@@ -5854,43 +6196,48 @@ class DesktopPet(QLabel):
             event.button()
             == Qt.MouseButton.LeftButton
         ):
-            if self.poke_input_locked:
-                self.single_click_timer.stop()
-                self.drag_position = None
-                self.press_position = None
-                self.is_dragging = False
-                self.ignore_next_left_release = False
-                event.accept()
-                return
-
-            if self.click_woke_from_sleep:
-                self.single_click_timer.stop()
-                self.click_woke_from_sleep = False
-                self.ignore_next_left_release = False
-
-            elif self.is_dragging:
+            if self.is_dragging:
                 self.single_click_timer.stop()
                 self.ignore_next_left_release = False
-                self.stop_drag_animation()
 
-                if not self.play_trigger_action(
-                    "drag_release"
-                ):
-                    self.start_release_bounce()
+                if self.drag_preserve_visual:
+                    self.finish_preserved_drag()
+                else:
+                    self.stop_drag_animation()
 
-            elif self.ignore_next_left_release:
-                # 双击事件之后的第二次松开，不再算单击
-                self.ignore_next_left_release = False
+                    if not self.play_trigger_action(
+                        "drag_release"
+                    ):
+                        self.start_release_bounce()
 
             else:
-                # 果子本体的双击特殊反应已经取消，
-                # 单击可以在松手后立即执行，不再等待 220ms。
-                self.handle_single_click()
+                if self.state == "sleeping":
+                    # 单击才叫醒；拖动睡着的果子不会叫醒。
+                    self.click_woke_from_sleep = True
+                    self.wake_up()
+
+                elif self.poke_input_locked:
+                    # 锁定期不接受“戳”，但仍然允许拖动。
+                    pass
+
+                elif self.ignore_next_left_release:
+                    self.ignore_next_left_release = False
+
+                else:
+                    if self.state == "custom_action":
+                        self.stop_custom_action(
+                            resume=False
+                        )
+
+                    self.cancel_release_bounce()
+                    self.handle_single_click()
 
             self.drag_position = None
             self.press_position = None
             self.is_dragging = False
+            self.click_woke_from_sleep = False
             event.accept()
+
 
     def mouseDoubleClickEvent(self, event):
         if (
