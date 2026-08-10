@@ -1529,7 +1529,9 @@ class DesktopPet(QLabel):
         )
 
     def load_image(self, filename):
-        path = self.image_path(filename)
+        # 核心图片也允许被 online_images 中的新版覆盖。
+        # 本地没有线上版本时自动回退到打包自带图片。
+        path = self.action_image_path(filename)
         pixmap = QPixmap(str(path))
 
         if pixmap.isNull():
@@ -1801,6 +1803,60 @@ class DesktopPet(QLabel):
             CDN_REPO_BASE_URL + relative_path,
         )
 
+    def core_image_filenames_from_version(
+        self,
+        version_data,
+    ):
+        """读取 version.json 指定的核心图片列表。"""
+
+        raw_filenames = version_data.get(
+            "core_images",
+            [],
+        )
+
+        if not isinstance(raw_filenames, list):
+            raise ValueError("核心图片列表格式错误。")
+
+        filenames = []
+
+        for raw_name in raw_filenames[:100]:
+            if not isinstance(raw_name, str):
+                raise ValueError("核心图片文件名无效。")
+
+            filename = raw_name.strip()
+
+            if (
+                not filename
+                or Path(filename).name != filename
+                or Path(filename).suffix.lower()
+                not in (
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                    ".webp",
+                )
+            ):
+                raise ValueError(
+                    "核心图片文件名不安全。"
+                )
+
+            if filename not in filenames:
+                filenames.append(filename)
+
+        return filenames
+
+    def merge_unique_filenames(self, *groups):
+        """合并多个文件名列表，同时保持顺序并去重。"""
+
+        merged = []
+
+        for group in groups:
+            for filename in group:
+                if filename not in merged:
+                    merged.append(filename)
+
+        return merged
+
     def action_filenames_from_text(self, actions_text):
         """提取旧动作和步骤序列引用的全部图片。"""
 
@@ -1935,16 +1991,12 @@ class DesktopPet(QLabel):
 
         return filenames
 
-    def download_action_images(
+    def download_named_images(
         self,
-        actions_text,
+        filenames,
         preferred_source=0,
     ):
-        """下载 actions.json 引用的所有图片。"""
-
-        filenames = self.action_filenames_from_text(
-            actions_text
-        )
+        """下载指定的线上图片，并在替换前验证图片内容。"""
 
         ONLINE_IMAGE_DIR.mkdir(
             parents=True,
@@ -1954,8 +2006,15 @@ class DesktopPet(QLabel):
         downloaded_count = 0
 
         for filename in filenames:
+            safe_name = self.sanitize_action_filename(
+                filename
+            )
+
+            if safe_name is None:
+                raise ValueError("图片文件名不安全。")
+
             encoded_name = urllib.parse.quote(
-                filename,
+                safe_name,
                 safe="",
             )
             image_urls = (
@@ -1979,9 +2038,11 @@ class DesktopPet(QLabel):
 
             temp_path = (
                 ONLINE_IMAGE_DIR
-                / f"{filename}.new"
+                / f"{safe_name}.new"
             )
-            final_path = ONLINE_IMAGE_DIR / filename
+            final_path = (
+                ONLINE_IMAGE_DIR / safe_name
+            )
 
             temp_path.write_bytes(image_data)
 
@@ -1995,13 +2056,29 @@ class DesktopPet(QLabel):
                     pass
 
                 raise ValueError(
-                    f"动作图片无法读取：{filename}"
+                    f"图片无法读取：{safe_name}"
                 )
 
             temp_path.replace(final_path)
             downloaded_count += 1
 
         return downloaded_count
+
+    def download_action_images(
+        self,
+        actions_text,
+        preferred_source=0,
+    ):
+        """兼容旧调用：下载 actions.json 引用的所有图片。"""
+
+        filenames = self.action_filenames_from_text(
+            actions_text
+        )
+
+        return self.download_named_images(
+            filenames,
+            preferred_source,
+        )
 
     def download_action_sounds(
         self,
@@ -2092,6 +2169,72 @@ class DesktopPet(QLabel):
             downloaded_count += 1
 
         return downloaded_count
+
+    def cleanup_online_asset_directory(
+        self,
+        directory,
+        keep_names,
+        allowed_suffixes,
+    ):
+        """删除线上缓存目录里已经不再引用的受管文件。"""
+
+        if not directory.exists():
+            return 0
+
+        keep_names = set(keep_names)
+        deleted_count = 0
+
+        for path in directory.iterdir():
+            if not path.is_file():
+                continue
+
+            # 临时 .new 文件由各下载流程自行管理。
+            if path.name.endswith(".new"):
+                continue
+
+            if path.suffix.lower() not in allowed_suffixes:
+                continue
+
+            if path.name in keep_names:
+                continue
+
+            try:
+                path.unlink()
+                deleted_count += 1
+            except OSError:
+                # 清理失败不能破坏已经成功的更新。
+                pass
+
+        return deleted_count
+
+    def cleanup_online_assets(
+        self,
+        image_filenames,
+        sound_filenames,
+    ):
+        """清理最新版已经不再使用的线上图片与音效。"""
+
+        deleted_images = (
+            self.cleanup_online_asset_directory(
+                ONLINE_IMAGE_DIR,
+                image_filenames,
+                {
+                    ".png",
+                    ".jpg",
+                    ".jpeg",
+                    ".webp",
+                },
+            )
+        )
+        deleted_sounds = (
+            self.cleanup_online_asset_directory(
+                ONLINE_SOUND_DIR,
+                sound_filenames,
+                {".wav"},
+            )
+        )
+
+        return deleted_images, deleted_sounds
 
     def write_update_files(
         self,
@@ -2274,8 +2417,30 @@ class DesktopPet(QLabel):
             ):
                 self.update_used_backup = True
 
-            image_count = self.download_action_images(
-                actions_text,
+            core_image_filenames = (
+                self.core_image_filenames_from_version(
+                    version_data
+                )
+            )
+            action_image_filenames = (
+                self.action_filenames_from_text(
+                    actions_text
+                )
+            )
+            image_filenames = (
+                self.merge_unique_filenames(
+                    core_image_filenames,
+                    action_image_filenames,
+                )
+            )
+            sound_filenames = (
+                self.action_sound_filenames_from_text(
+                    actions_text
+                )
+            )
+
+            image_count = self.download_named_images(
+                image_filenames,
                 preferred_source,
             )
             sound_count = self.download_action_sounds(
@@ -2288,6 +2453,13 @@ class DesktopPet(QLabel):
                 settings_text,
                 actions_text,
                 greetings_text,
+            )
+
+            deleted_images, deleted_sounds = (
+                self.cleanup_online_assets(
+                    image_filenames,
+                    sound_filenames,
+                )
             )
 
             self.reload_settings_and_messages()
@@ -2303,14 +2475,23 @@ class DesktopPet(QLabel):
                 for items in self.greetings.values()
             )
 
+            cleanup_text = ""
+
+            if deleted_images or deleted_sounds:
+                cleanup_text = (
+                    f"，已清理 {deleted_images} 张旧图片、"
+                    f"{deleted_sounds} 个旧音效"
+                )
+
             self.say(
                 "在线更新完成！"
                 f"版本 {version}，"
                 f"共 {len(self.messages)} 句台词，"
                 f"{greeting_count} 句问候，"
                 f"{len(self.actions)} 个动作，"
-                f"已同步 {image_count} 张动作图片，"
+                f"已同步 {image_count} 张图片，"
                 f"{sound_count} 个音效"
+                f"{cleanup_text}"
                 f"{route_text}。"
             )
 
@@ -5278,7 +5459,13 @@ class DesktopPet(QLabel):
 
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(
-            QIcon(str(self.image_path("normal.PNG"))),
+            QIcon(
+                str(
+                    self.action_image_path(
+                        "normal.PNG"
+                    )
+                )
+            ),
             self,
         )
         self.tray_icon.setToolTip("果子")
