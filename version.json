@@ -1,5 +1,7 @@
 {
-  "version": "1.3",
+  "version": "2.0",
+  "app_version": 1,
+  "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
   "actions_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/actions.json",
