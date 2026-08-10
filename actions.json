@@ -1,5 +1,5 @@
 {
-  "version": 20,
+  "version": 21,
   "actions": [
     {
       "name": "开心摇摆",
@@ -58,10 +58,9 @@
         {
           "type": "frames",
           "frames": [
-            "wake.PNG",
-            "normal.PNG"
+            "wake.PNG"
           ],
-          "frame_interval": 260,
+          "frame_interval": 1500,
           "loops": 1,
           "playback": "loop"
         }
