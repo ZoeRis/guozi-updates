@@ -1,6 +1,6 @@
 {
-  "version": "5.1-network-auto-retry",
-  "app_version": 32,
+  "version": "5.2-double-run-speed",
+  "app_version": 33,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -30,7 +30,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "5bd8f9eb2c016162e1062f1604823d562d91d6d2f6148250e4c991d43813b895",
+  "app_sha256": "f84540ace162af154ae5ee2c392bb7a028f49c225e1c4b7051cfa880ec9be8ae",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"
