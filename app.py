@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 23
+APP_BUILD_VERSION = 28
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -559,6 +559,12 @@ class DesktopPet(QLabel):
         self.walk_velocity_y = 0.0
         self.walk_target_x = 0
         self.walk_target_y = 0
+
+        # 横向散步撞到左右边缘后，会沿边缘上下爬一小段，
+        # 再转回屏幕内部继续走。
+        self.edge_crawl_active = False
+        self.edge_crawl_side = 0
+        self.edge_crawl_direction = 0
 
         self.summon_run_active = False
         self.global_left_was_down = False
@@ -1652,6 +1658,27 @@ class DesktopPet(QLabel):
             Qt.TransformationMode.SmoothTransformation,
         )
 
+    def load_optional_image(self, filename):
+        """读取可在线新增的核心图片；尚未同步时返回 None。"""
+
+        path = self.action_image_path(filename)
+        pixmap = QPixmap(str(path))
+
+        if pixmap.isNull():
+            debug_log(
+                f"optional image not ready: {filename}"
+            )
+            return None
+
+        size = self.settings["pet_size"]
+
+        return pixmap.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
     def load_all_images(self):
         self.normal = self.load_image("normal.PNG")
         self.blink = self.load_image("blink.PNG")
@@ -1677,6 +1704,40 @@ class DesktopPet(QLabel):
             self.load_image("runright1.PNG"),
             self.load_image("runright2.PNG"),
         ]
+
+        # 用户单独绘制的爬墙贴图：
+        # -1 = 左边缘，1 = 右边缘。
+        # 上爬和下爬共用同一侧的两帧动画，不旋转、不镜像。
+        climb_left = [
+            self.load_optional_image(
+                "climbleft1.PNG"
+            ),
+            self.load_optional_image(
+                "climbleft2.PNG"
+            ),
+        ]
+        climb_right = [
+            self.load_optional_image(
+                "climbright1.PNG"
+            ),
+            self.load_optional_image(
+                "climbright2.PNG"
+            ),
+        ]
+
+        self.edge_crawl_frames = {
+            -1: (
+                climb_left
+                if all(climb_left)
+                else None
+            ),
+            1: (
+                climb_right
+                if all(climb_right)
+                else None
+            ),
+        }
+
         self.sleep_frames = [
             self.load_image("sleep1.PNG"),
             self.load_image("sleep2.PNG"),
@@ -6217,6 +6278,10 @@ class DesktopPet(QLabel):
     def start_horizontal_walk(self):
         """沿当前高度左右散步。"""
 
+        self.edge_crawl_active = False
+        self.edge_crawl_side = 0
+        self.edge_crawl_direction = 0
+
         center = QPoint(
             self.x() + self.width() // 2,
             self.y() + self.height() // 2,
@@ -6416,7 +6481,7 @@ class DesktopPet(QLabel):
         self.walk_animation_timer.start()
 
     def current_movement_frames(self):
-        """普通散步用 walk；双击召唤的快速移动用 run。"""
+        """散步 / 跑步 / 边缘爬行使用对应帧。"""
 
         if self.summon_run_active:
             return (
@@ -6424,6 +6489,14 @@ class DesktopPet(QLabel):
                 if self.walk_direction == -1
                 else self.run_right
             )
+
+        if self.edge_crawl_active:
+            frames = self.edge_crawl_frames.get(
+                self.edge_crawl_side
+            )
+
+            if frames:
+                return frames
 
         return (
             self.walk_left
@@ -6460,6 +6533,8 @@ class DesktopPet(QLabel):
 
         if self.summon_run_active:
             self.update_summon_running()
+        elif self.edge_crawl_active:
+            self.update_edge_crawling()
         elif (
             self.settings["movement_mode"]
             == "full_screen"
@@ -6511,6 +6586,227 @@ class DesktopPet(QLabel):
         )
         self.walk_steps_left -= 1
 
+    def start_edge_crawl(self, side):
+        """撞到左/右屏幕边缘后，沿该边缘上下爬一小段。"""
+
+        frames = self.edge_crawl_frames.get(
+            side
+        )
+
+        # 新 climb 图片还没同步到本机时，
+        # 暂时退回普通转身；资源更新完成后会自动启用。
+        if not frames:
+            debug_log(
+                "edge crawl skipped: "
+                f"climb frames not ready side={side}"
+            )
+            return False
+
+        area = self.current_action_screen_area()
+
+        if area is None:
+            return False
+
+        top_limit = area.top()
+        bottom_limit = (
+            area.bottom()
+            - self.height()
+            + 1
+        )
+
+        up_space = max(
+            0,
+            self.y() - top_limit,
+        )
+        down_space = max(
+            0,
+            bottom_limit - self.y(),
+        )
+
+        speed = max(
+            1,
+            self.settings["walk_speed"],
+        )
+        minimum_space = max(
+            36,
+            speed * 12,
+        )
+
+        possible_directions = []
+
+        if up_space >= minimum_space:
+            possible_directions.append(-1)
+
+        if down_space >= minimum_space:
+            possible_directions.append(1)
+
+        # 靠近顶角/底角时，选真正还有空间的一边。
+        if not possible_directions:
+            if up_space > down_space and up_space > 0:
+                possible_directions = [-1]
+            elif down_space > 0:
+                possible_directions = [1]
+            elif up_space > 0:
+                possible_directions = [-1]
+            else:
+                return False
+
+        vertical_direction = random.choice(
+            possible_directions
+        )
+
+        available_distance = (
+            up_space
+            if vertical_direction == -1
+            else down_space
+        )
+
+        # 一次沿墙爬约 60–220 px；空间不足就爬到能到的位置。
+        maximum_distance = min(
+            220,
+            available_distance,
+        )
+        minimum_distance = min(
+            60,
+            maximum_distance,
+        )
+
+        if maximum_distance <= 0:
+            return False
+
+        crawl_distance = random.randint(
+            max(1, minimum_distance),
+            max(1, maximum_distance),
+        )
+
+        self.edge_crawl_active = True
+        self.edge_crawl_side = side
+        self.edge_crawl_direction = (
+            vertical_direction
+        )
+
+        self.walk_float_x = float(
+            self.x()
+        )
+        self.walk_float_y = float(
+            self.y()
+        )
+        self.walk_velocity_x = 0.0
+        self.walk_velocity_y = float(
+            speed
+            * vertical_direction
+        )
+        self.walk_steps_left = max(
+            1,
+            math.ceil(
+                crawl_distance
+                / speed
+            ),
+        )
+        self.walk_frame_index = 0
+
+        debug_log(
+            "edge crawl start "
+            f"side={'left' if side == -1 else 'right'} "
+            f"direction={'up' if vertical_direction == -1 else 'down'} "
+            f"distance={crawl_distance}"
+        )
+
+        self.show_current_walk_frame()
+        return True
+
+    def finish_edge_crawl(self):
+        """爬完墙后转身，重新朝屏幕内部继续散步。"""
+
+        side = self.edge_crawl_side
+
+        self.edge_crawl_active = False
+        self.edge_crawl_side = 0
+        self.edge_crawl_direction = 0
+
+        # 左墙往右，右墙往左。
+        self.walk_direction = (
+            1
+            if side == -1
+            else -1
+        )
+
+        speed = max(
+            1,
+            self.settings["walk_speed"],
+        )
+
+        self.walk_velocity_x = float(
+            speed
+            * self.walk_direction
+        )
+        self.walk_velocity_y = 0.0
+        self.walk_float_x = float(
+            self.x()
+        )
+        self.walk_float_y = float(
+            self.y()
+        )
+
+        # 离开墙面后再走一段，避免刚爬完马上又撞回同一边。
+        self.walk_steps_left = random.randint(
+            45,
+            95,
+        )
+        self.walk_frame_index = 0
+
+        debug_log(
+            "edge crawl finish "
+            f"turn={'right' if self.walk_direction == 1 else 'left'}"
+        )
+
+        self.show_current_walk_frame()
+
+    def update_edge_crawling(self):
+        """沿当前左右屏幕边缘垂直移动。"""
+
+        area = self.current_action_screen_area()
+
+        if area is None:
+            self.finish_edge_crawl()
+            return
+
+        self.walk_float_y += (
+            self.walk_velocity_y
+        )
+
+        new_x = self.x()
+        new_y = round(
+            self.walk_float_y
+        )
+
+        safe_x, safe_y = (
+            self.safe_coordinates(
+                new_x,
+                new_y,
+            )
+        )
+
+        self.move(
+            safe_x,
+            safe_y,
+        )
+        self.walk_float_y = float(
+            safe_y
+        )
+
+        self.walk_steps_left -= 1
+
+        hit_vertical_edge = (
+            safe_y != new_y
+        )
+
+        if (
+            hit_vertical_edge
+            or self.walk_steps_left <= 0
+        ):
+            self.finish_edge_crawl()
+
     def update_horizontal_walking(self):
         """更新横向散步位置。"""
 
@@ -6531,6 +6827,18 @@ class DesktopPet(QLabel):
             if self.play_trigger_action("edge"):
                 return
 
+            wall_side = (
+                -1
+                if self.walk_direction == -1
+                else 1
+            )
+
+            if self.start_edge_crawl(
+                wall_side
+            ):
+                return
+
+            # 极端情况下屏幕高度不足，才退回普通反向走。
             self.walk_direction *= -1
             self.walk_velocity_x *= -1
             self.walk_steps_left = random.randint(
@@ -6603,6 +6911,9 @@ class DesktopPet(QLabel):
         self.walk_move_timer.stop()
         self.walk_animation_timer.stop()
         self.summon_run_active = False
+        self.edge_crawl_active = False
+        self.edge_crawl_side = 0
+        self.edge_crawl_direction = 0
 
     def stop_walking(self):
         self.stop_walk_timers()

@@ -1,6 +1,6 @@
 {
-  "version": "4.5-escape-direction-fix",
-  "app_version": 26,
+  "version": "4.7-custom-climb-frames",
+  "app_version": 28,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -16,6 +16,10 @@
     "walkleft2.PNG",
     "walkright1.PNG",
     "walkright2.PNG",
+    "climbleft1.PNG",
+    "climbleft2.PNG",
+    "climbright1.PNG",
+    "climbright2.PNG",
     "runleft1.PNG",
     "runleft2.PNG",
     "runright1.PNG",
@@ -26,7 +30,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "d0927d614adfd7ead4186c4aad4d4654b444487f0ed1ebf9559af527ba5c81e7",
+  "app_sha256": "6c716f5e79564c67864485923f2645a47dd992085089f6c8b31c15b0e6a2cc77",
   "launcher_version": 25,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "0bc5eded1873f40b2c2b43a63065d8eac4cf4e4887a40592e8d062387a9e51c4"
