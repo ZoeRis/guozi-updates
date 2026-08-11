@@ -514,8 +514,7 @@ class DesktopPet(QLabel):
 
         # 连戳循环：
         # 第 1 组三下 -> “你怎么还戳呀”
-        # 第 2 组三下 -> “你怎么还戳呀”
-        # 第 3 组三下 -> “还戳！我跑啦！”
+        # 第 2 组三下 -> “还戳！我跑啦！”
         # 然后整轮重新开始。
         self.poke_group_count = 0
         self.poke_warning_count = 0
@@ -4146,12 +4145,12 @@ class DesktopPet(QLabel):
         self.poke_group_count = 0
         self.poke_input_locked = True
 
-        # 前两组三连戳都播放“你怎么还戳呀”。
-        if self.poke_warning_count < 2:
+        # 第一组三连戳播放“你怎么还戳呀”。
+        if self.poke_warning_count < 1:
             self.poke_warning_count += 1
             return "triple_click"
 
-        # 第三组三连戳改成逃跑；等整段动作与 2 秒锁结束后
+        # 第二组三连戳直接逃跑；等整段动作与 0.5 秒锁结束后
         # 再把整个循环重置。
         self.poke_cycle_reset_pending = True
         return "five_click"
@@ -4207,7 +4206,7 @@ class DesktopPet(QLabel):
             self.reset_poke_cycle()
             return
 
-        # 前两组三连戳结束后，给下一组 2 秒的连续操作窗口。
+        # 第一组三连戳警告结束后，给下一组 2 秒的连续操作窗口。
         # 超过这个时间没有继续戳，整套计数重新开始。
         self.poke_inactivity_timer.start()
 

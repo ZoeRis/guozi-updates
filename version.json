@@ -1,6 +1,6 @@
 {
-  "version": "3.8-poke-timeout-run-frames",
-  "app_version": 19,
+  "version": "3.9-one-warning-then-run",
+  "app_version": 20,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -26,7 +26,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "4767cff7b6066edd503392fa179914110f46437f19d0ad51a7db98ec4ce2218b",
+  "app_sha256": "a1c65df084f9cae7303570dd409ad48ab6f3b04f51e8455f355edc36662d4e73",
   "launcher_version": 17,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "44301137af031d4144a504f757a2134c756f22bdd052cf271316f4f58b111b84"
