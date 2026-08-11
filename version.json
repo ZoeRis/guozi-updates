@@ -1,6 +1,6 @@
 {
-  "version": "4.4-final-bootstrap-online-test",
-  "app_version": 23,
+  "version": "4.5-escape-direction-fix",
+  "app_version": 26,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -26,7 +26,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "e330e60a1ad367d099ae6d2b63564da391753771ef64d061968f46bcd7b7cc6e",
+  "app_sha256": "d0927d614adfd7ead4186c4aad4d4654b444487f0ed1ebf9559af527ba5c81e7",
   "launcher_version": 25,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "0bc5eded1873f40b2c2b43a63065d8eac4cf4e4887a40592e8d062387a9e51c4"

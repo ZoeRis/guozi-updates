@@ -5371,40 +5371,136 @@ class DesktopPet(QLabel):
 
         elif step_type == "move_away_mouse":
             cursor = QCursor.pos()
-            pet_center_x = (
-                self.x() + self.width() / 2
+            area = self.current_action_screen_area()
+            distance = int(
+                step.get("distance", 180)
             )
-            pet_center_y = (
-                self.y() + self.height() / 2
-            )
-            dx = pet_center_x - cursor.x()
-            dy = pet_center_y - cursor.y()
-            length = math.hypot(dx, dy)
 
-            if length < 1:
-                angle = random.uniform(
-                    0,
-                    2 * math.pi,
+            if area is None:
+                target_x, target_y = self.safe_coordinates(
+                    self.x(),
+                    self.y(),
                 )
-                dx = math.cos(angle)
-                dy = math.sin(angle)
-                length = 1.0
+                self.custom_action_step_target = QPoint(
+                    target_x,
+                    target_y,
+                )
 
-            distance = int(step.get("distance", 180))
-            target_x, target_y = self.safe_coordinates(
-                round(
+            else:
+                # 跑步图只有左右两套，所以逃跑明确采用水平移动。
+                # 先判断鼠标在哪边，再优先朝反方向跑。
+                pet_center_x = (
                     self.x()
-                    + dx / length * distance
-                ),
-                round(
-                    self.y()
-                    + dy / length * distance
-                ),
-            )
-            self.custom_action_step_target = QPoint(
-                target_x,
-                target_y,
-            )
+                    + self.width() / 2
+                )
+
+                left_limit = area.left()
+                right_limit = (
+                    area.right()
+                    - self.width()
+                    + 1
+                )
+
+                room_left = max(
+                    0,
+                    self.x() - left_limit,
+                )
+                room_right = max(
+                    0,
+                    right_limit - self.x(),
+                )
+
+                if cursor.x() < pet_center_x:
+                    preferred_direction = 1
+                elif cursor.x() > pet_center_x:
+                    preferred_direction = -1
+                else:
+                    # 鼠标刚好在果子中央时，
+                    # 优先选空间更大的方向；一样大就随机。
+                    if room_left > room_right:
+                        preferred_direction = -1
+                    elif room_right > room_left:
+                        preferred_direction = 1
+                    else:
+                        preferred_direction = random.choice(
+                            [-1, 1]
+                        )
+
+                preferred_room = (
+                    room_left
+                    if preferred_direction == -1
+                    else room_right
+                )
+                alternate_room = (
+                    room_right
+                    if preferred_direction == -1
+                    else room_left
+                )
+
+                # 少于 24 px 基本只会看起来像“原地踏步”。
+                # 如果另一边明显有空间，就直接换方向。
+                minimum_visible_run = min(
+                    24,
+                    distance,
+                )
+
+                if (
+                    preferred_room
+                    < minimum_visible_run
+                    and alternate_room
+                    > preferred_room
+                ):
+                    direction = (
+                        -preferred_direction
+                    )
+                    available_room = (
+                        alternate_room
+                    )
+                else:
+                    direction = preferred_direction
+                    available_room = (
+                        preferred_room
+                    )
+
+                # 极端情况下两边都几乎没有空间，
+                # 仍选择空间更大的一侧，不让方向判定固定成右边。
+                if available_room <= 0:
+                    if room_left > room_right:
+                        direction = -1
+                        available_room = room_left
+                    elif room_right > room_left:
+                        direction = 1
+                        available_room = room_right
+
+                actual_distance = min(
+                    distance,
+                    available_room,
+                )
+
+                target_x = round(
+                    self.x()
+                    + direction
+                    * actual_distance
+                )
+                target_y = self.y()
+
+                target_x, target_y = self.safe_coordinates(
+                    target_x,
+                    target_y,
+                )
+
+                debug_log(
+                    "escape direction "
+                    f"dir={'left' if direction == -1 else 'right'} "
+                    f"room_left={room_left} "
+                    f"room_right={room_right} "
+                    f"distance={actual_distance}"
+                )
+
+                self.custom_action_step_target = QPoint(
+                    target_x,
+                    target_y,
+                )
 
         elif step_type == "return":
             if self.custom_action_origin is None:
@@ -5454,11 +5550,37 @@ class DesktopPet(QLabel):
     ):
         """给逃跑类 custom motion 显示左右跑步贴图。"""
 
-        direction = (
-            -1
-            if target.x() < start.x()
-            else 1
-        )
+        if target.x() < start.x():
+            direction = -1
+        elif target.x() > start.x():
+            direction = 1
+        else:
+            # 极端情况下没有水平位移时，不再默认成右跑。
+            area = self.current_action_screen_area()
+
+            if area is None:
+                direction = random.choice(
+                    [-1, 1]
+                )
+            else:
+                left_room = max(
+                    0,
+                    self.x() - area.left(),
+                )
+                right_room = max(
+                    0,
+                    (
+                        area.right()
+                        - self.width()
+                        + 1
+                    )
+                    - self.x(),
+                )
+                direction = (
+                    -1
+                    if left_room > right_room
+                    else 1
+                )
 
         frames = (
             self.run_left
