@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 34
+APP_BUILD_VERSION = 35
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -596,6 +596,8 @@ class DesktopPet(QLabel):
         # 横向散步里大部分会专门走到最近的屏幕边缘，
         # 这样爬墙动作不会只能靠偶然撞墙才能触发。
         self.horizontal_walk_to_edge = False
+        self.full_screen_walk_to_edge = False
+        self.full_screen_edge_side = 0
 
         self.summon_run_active = False
         self.global_left_was_down = False
@@ -6635,10 +6637,17 @@ class DesktopPet(QLabel):
         self.walk_animation_timer.start()
 
     def start_full_screen_walk(self):
+        """满屏模式：普通闲逛，或主动走到左右墙边再爬墙。"""
+
         self.walk_animation_timer.setInterval(
             WALK_FRAME_INTERVAL_MS
         )
-        """在当前屏幕可用区域里选择目标点并斜向移动。"""
+
+        self.full_screen_walk_to_edge = False
+        self.full_screen_edge_side = 0
+        self.edge_crawl_active = False
+        self.edge_crawl_side = 0
+        self.edge_crawl_direction = 0
 
         center = QPoint(
             self.x() + self.width() // 2,
@@ -6650,36 +6659,33 @@ class DesktopPet(QLabel):
             self.schedule_walk()
             return
 
-        edge_padding = 14
-        left_limit = area.left() + edge_padding
-        top_limit = area.top() + edge_padding
-        right_limit = (
+        actual_left_limit = area.left()
+        actual_top_limit = area.top()
+        actual_right_limit = (
             area.right()
             - self.width()
             + 1
-            - edge_padding
         )
-        bottom_limit = (
+        actual_bottom_limit = (
             area.bottom()
             - self.height()
             + 1
-            - edge_padding
         )
 
         if (
-            right_limit < left_limit
-            or bottom_limit < top_limit
+            actual_right_limit < actual_left_limit
+            or actual_bottom_limit < actual_top_limit
         ):
             self.schedule_walk()
             return
 
         current_x = max(
-            left_limit,
-            min(self.x(), right_limit),
+            actual_left_limit,
+            min(self.x(), actual_right_limit),
         )
         current_y = max(
-            top_limit,
-            min(self.y(), bottom_limit),
+            actual_top_limit,
+            min(self.y(), actual_bottom_limit),
         )
 
         if (
@@ -6688,42 +6694,165 @@ class DesktopPet(QLabel):
         ):
             self.move(current_x, current_y)
 
-        minimum_distance = max(
-            90,
-            self.settings["walk_speed"] * 35,
+        # 和横向模式一样：70% 的散步会主动找墙。
+        # 这样开“满屏幕乱走”时也能正常看到爬墙。
+        self.full_screen_walk_to_edge = (
+            random.random() < 0.70
         )
 
         target_x = current_x
         target_y = current_y
-        distance = 0.0
 
-        for _ in range(30):
-            candidate_x = random.randint(
-                left_limit,
-                right_limit,
+        if self.full_screen_walk_to_edge:
+            left_distance = max(
+                0,
+                current_x - actual_left_limit,
             )
-            candidate_y = random.randint(
-                top_limit,
-                bottom_limit,
-            )
-
-            candidate_distance = math.hypot(
-                candidate_x - current_x,
-                candidate_y - current_y,
+            right_distance = max(
+                0,
+                actual_right_limit - current_x,
             )
 
-            if candidate_distance >= minimum_distance:
-                target_x = candidate_x
-                target_y = candidate_y
-                distance = candidate_distance
-                break
+            # 优先去较近的墙；一样近时随机。
+            if left_distance < right_distance:
+                side = -1
+            elif right_distance < left_distance:
+                side = 1
+            else:
+                side = random.choice([-1, 1])
+
+            self.full_screen_edge_side = side
+            target_x = (
+                actual_left_limit
+                if side == -1
+                else actual_right_limit
+            )
+
+            vertical_padding = min(
+                28,
+                max(
+                    0,
+                    (
+                        actual_bottom_limit
+                        - actual_top_limit
+                    ) // 5,
+                ),
+            )
+
+            top_target_limit = (
+                actual_top_limit
+                + vertical_padding
+            )
+            bottom_target_limit = (
+                actual_bottom_limit
+                - vertical_padding
+            )
+
+            if bottom_target_limit < top_target_limit:
+                top_target_limit = actual_top_limit
+                bottom_target_limit = actual_bottom_limit
+
+            target_y = random.randint(
+                top_target_limit,
+                bottom_target_limit,
+            )
+
+            debug_log(
+                "full screen walk seeks edge "
+                f"side={'left' if side == -1 else 'right'} "
+                f"target=({target_x},{target_y})"
+            )
+
+        else:
+            # 普通满屏闲逛仍保留一点边距，
+            # 避免每一次随机散步都蹭到边缘。
+            edge_padding = 14
+            left_limit = (
+                actual_left_limit
+                + edge_padding
+            )
+            top_limit = (
+                actual_top_limit
+                + edge_padding
+            )
+            right_limit = (
+                actual_right_limit
+                - edge_padding
+            )
+            bottom_limit = (
+                actual_bottom_limit
+                - edge_padding
+            )
+
+            if (
+                right_limit < left_limit
+                or bottom_limit < top_limit
+            ):
+                left_limit = actual_left_limit
+                top_limit = actual_top_limit
+                right_limit = actual_right_limit
+                bottom_limit = actual_bottom_limit
+
+            minimum_distance = max(
+                90,
+                self.settings["walk_speed"] * 35,
+            )
+
+            distance = 0.0
+
+            for _ in range(30):
+                candidate_x = random.randint(
+                    left_limit,
+                    right_limit,
+                )
+                candidate_y = random.randint(
+                    top_limit,
+                    bottom_limit,
+                )
+
+                candidate_distance = math.hypot(
+                    candidate_x - current_x,
+                    candidate_y - current_y,
+                )
+
+                if (
+                    candidate_distance
+                    >= minimum_distance
+                ):
+                    target_x = candidate_x
+                    target_y = candidate_y
+                    distance = candidate_distance
+                    break
+
+            if distance <= 0:
+                self.schedule_walk()
+                return
+
+        dx = target_x - current_x
+        dy = target_y - current_y
+        distance = math.hypot(dx, dy)
+
+        # 已经贴在墙上时，直接开始爬，不原地走。
+        if (
+            self.full_screen_walk_to_edge
+            and distance <= 1
+        ):
+            self.state = "walking"
+
+            if self.start_edge_crawl(
+                self.full_screen_edge_side
+            ):
+                self.walk_move_timer.start()
+                self.walk_animation_timer.start()
+                return
+
+            self.stop_walking()
+            return
 
         if distance <= 0:
             self.schedule_walk()
             return
 
-        dx = target_x - current_x
-        dy = target_y - current_y
         speed = max(
             1.5,
             float(self.settings["walk_speed"]),
@@ -6733,8 +6862,12 @@ class DesktopPet(QLabel):
         self.walk_direction = -1 if dx < 0 else 1
         self.walk_float_x = float(current_x)
         self.walk_float_y = float(current_y)
-        self.walk_velocity_x = speed * dx / distance
-        self.walk_velocity_y = speed * dy / distance
+        self.walk_velocity_x = (
+            speed * dx / distance
+        )
+        self.walk_velocity_y = (
+            speed * dy / distance
+        )
         self.walk_target_x = target_x
         self.walk_target_y = target_y
         self.walk_steps_left = max(
@@ -7146,6 +7279,21 @@ class DesktopPet(QLabel):
             if self.play_trigger_action("edge"):
                 return
 
+            if safe_x != new_x:
+                side = (
+                    -1
+                    if new_x < safe_x
+                    else 1
+                )
+
+                self.full_screen_walk_to_edge = False
+                self.full_screen_edge_side = 0
+
+                if self.start_edge_crawl(
+                    side
+                ):
+                    return
+
             self.stop_walking()
             return
 
@@ -7172,6 +7320,23 @@ class DesktopPet(QLabel):
                 self.walk_target_x,
                 self.walk_target_y,
             )
+
+            if (
+                self.full_screen_walk_to_edge
+                and self.full_screen_edge_side
+                in (-1, 1)
+            ):
+                side = (
+                    self.full_screen_edge_side
+                )
+                self.full_screen_walk_to_edge = False
+                self.full_screen_edge_side = 0
+
+                if self.start_edge_crawl(
+                    side
+                ):
+                    return
+
             self.stop_walking()
 
     def stop_walk_timers(self):
@@ -7183,6 +7348,8 @@ class DesktopPet(QLabel):
         )
         self.summon_run_active = False
         self.horizontal_walk_to_edge = False
+        self.full_screen_walk_to_edge = False
+        self.full_screen_edge_side = 0
         self.edge_crawl_active = False
         self.edge_crawl_side = 0
         self.edge_crawl_direction = 0
@@ -8184,6 +8351,64 @@ class DesktopPet(QLabel):
         if speed <= DRAG_INERTIA_STOP_SPEED:
             self.finish_drag_inertia()
 
+    def wall_side_if_at_edge(
+        self,
+        threshold=4,
+    ):
+        """果子贴在当前屏幕左/右边缘时返回 -1 / 1。"""
+
+        area = self.current_action_screen_area()
+
+        if area is None:
+            return 0
+
+        left_limit = area.left()
+        right_limit = (
+            area.right()
+            - self.width()
+            + 1
+        )
+
+        if abs(self.x() - left_limit) <= threshold:
+            return -1
+
+        if abs(self.x() - right_limit) <= threshold:
+            return 1
+
+        return 0
+
+    def try_start_manual_edge_crawl(self):
+        """拖动放到墙边时，把这个动作解释成“让果子爬墙”。"""
+
+        if self.walking_paused:
+            return False
+
+        side = self.wall_side_if_at_edge()
+
+        if side not in (-1, 1):
+            return False
+
+        self.stop_walk_timers()
+        self.state = "walking"
+        self.walk_animation_timer.setInterval(
+            WALK_FRAME_INTERVAL_MS
+        )
+
+        if not self.start_edge_crawl(side):
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.schedule_walk()
+            return False
+
+        debug_log(
+            "manual edge crawl "
+            f"side={'left' if side == -1 else 'right'}"
+        )
+
+        self.walk_move_timer.start()
+        self.walk_animation_timer.start()
+        return True
+
     def finish_drag_inertia(self):
         """惯性停下后，在最终位置执行原本的落地动作。"""
 
@@ -8202,6 +8427,10 @@ class DesktopPet(QLabel):
             "drag inertia finish "
             f"position=({self.x()},{self.y()})"
         )
+
+        if self.try_start_manual_edge_crawl():
+            self.try_apply_pending_online_update()
+            return
 
         if not self.play_trigger_action(
             "drag_release"
@@ -8275,7 +8504,9 @@ class DesktopPet(QLabel):
             )
 
             if not inertia_started:
-                if not self.play_trigger_action(
+                if self.try_start_manual_edge_crawl():
+                    pass
+                elif not self.play_trigger_action(
                     "drag_release"
                 ):
                     self.start_release_bounce()
