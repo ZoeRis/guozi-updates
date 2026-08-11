@@ -3845,6 +3845,16 @@ class DesktopPet(QLabel):
     def refresh_action_sound_cache(self):
         """保留仍然有效的播放器，只增删真正变化的音效。"""
 
+        if (
+            sys.platform == "win32"
+            and winsound is not None
+        ):
+            # Windows 原生播放按文件路径直接读取，
+            # 不需要 QSoundEffect 缓存。
+            if self.sound_effects:
+                self.release_action_sound_cache()
+            return
+
         desired_names = set(
             self.referenced_action_sound_names()
         )
@@ -3886,7 +3896,20 @@ class DesktopPet(QLabel):
             )
 
     def preload_action_sounds(self):
-        """预先加载动作音效，并只复用一个播放器。"""
+        """预先准备动作音效。"""
+
+        # Windows 上改用系统原生 winsound。
+        # 不再创建 QSoundEffect，避免 Qt 后端进入
+        # “isPlaying=True 但扬声器实际无声”的假播放状态。
+        if (
+            sys.platform == "win32"
+            and winsound is not None
+        ):
+            self.release_action_sound_cache()
+            debug_log(
+                "audio backend=windows winsound"
+            )
+            return
 
         self.release_action_sound_cache()
         generation = self.sound_cache_generation
@@ -3896,8 +3919,6 @@ class DesktopPet(QLabel):
         ):
             self.create_sound_effect(filename)
 
-        # 等文件加载完成后静音播放极短时间一次，
-        # 只用于启动时唤醒音频后端，避免第一次戳明显迟到。
         QTimer.singleShot(
             180,
             lambda current_generation=generation:
@@ -4033,6 +4054,20 @@ class DesktopPet(QLabel):
             )
             return False
 
+        # Windows 上直接交给系统 WAV 播放器。
+        # 每次调用都会从文件开头重新播放；连续戳时，
+        # 新一次播放自然替换上一声，适合这种很短的 poke.wav。
+        if (
+            sys.platform == "win32"
+            and winsound is not None
+        ):
+            debug_log(
+                f"winsound direct request path={sound_path}"
+            )
+            return self.play_sound_windows_fallback(
+                sound_path
+            )
+
         effect = self.get_ready_sound_effect(
             safe_name
         )
@@ -4157,7 +4192,7 @@ class DesktopPet(QLabel):
         self,
         sound_path,
     ):
-        """Qt 真正失败时才使用 Windows WAV 播放器。"""
+        """使用 Windows 原生 WAV 播放器。"""
 
         if winsound is None:
             return False
@@ -4170,7 +4205,7 @@ class DesktopPet(QLabel):
                 | winsound.SND_NODEFAULT,
             )
             debug_log(
-                f"winsound fallback started path={sound_path}"
+                f"winsound started path={sound_path}"
             )
             return True
 

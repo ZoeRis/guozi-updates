@@ -1,6 +1,6 @@
 {
-  "version": "3.1-pickup-rules",
-  "app_version": 12,
+  "version": "3.2-windows-audio-fix",
+  "app_version": 13,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
