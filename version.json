@@ -1,6 +1,6 @@
 {
-  "version": "3.6-two-stage-updater",
-  "app_version": 16,
+  "version": "3.8-poke-timeout-run-frames",
+  "app_version": 19,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -16,13 +16,17 @@
     "walkleft2.PNG",
     "walkright1.PNG",
     "walkright2.PNG",
+    "runleft1.PNG",
+    "runleft2.PNG",
+    "runright1.PNG",
+    "runright2.PNG",
     "sleep1.PNG",
     "sleep2.PNG",
     "drag1.PNG",
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "ae0cfb82ad5de0c3025911b7bf4bf9003db882721fea4fca0cb980639ac5b8f1",
+  "app_sha256": "4767cff7b6066edd503392fa179914110f46437f19d0ad51a7db98ec4ce2218b",
   "launcher_version": 17,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "44301137af031d4144a504f757a2134c756f22bdd052cf271316f4f58b111b84"

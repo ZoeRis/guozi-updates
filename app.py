@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import shutil
 import sys
 import threading
 import time
@@ -62,6 +63,10 @@ GREETINGS_FILE = APP_DIR / "greetings.json"
 ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
+
+UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
+UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
+UPDATE_JOURNAL_FILE = APP_DIR / ".guozi_update_journal.json"
 
 
 def debug_log(message):
@@ -569,6 +574,10 @@ class DesktopPet(QLabel):
             -3, -6, -3, 0,
         ]
 
+        # 如果上次资源更新在替换文件途中异常退出，
+        # 启动时先恢复上一套完整资源。
+        self.recover_interrupted_resource_update()
+
         self.load_settings()
         self.load_messages()
         self.load_actions()
@@ -653,11 +662,20 @@ class DesktopPet(QLabel):
         )
 
         # 特殊戳击动作完整结束后，再锁住 0.5 秒。
-        # 这 0.5 秒内左键点击和拖动都会被忽略。
+        # 这 0.5 秒内只忽略戳击；拖动仍然允许。
         self.poke_cooldown_timer = QTimer(self)
         self.poke_cooldown_timer.setSingleShot(True)
         self.poke_cooldown_timer.timeout.connect(
             self.unlock_poke_input
+        )
+
+        # 连续一段时间没有新的有效戳击，就把整套连戳轮次清零。
+        # 这样“戳两下，隔一会儿再戳”不会被算成第三下。
+        self.poke_inactivity_timer = QTimer(self)
+        self.poke_inactivity_timer.setSingleShot(True)
+        self.poke_inactivity_timer.setInterval(2000)
+        self.poke_inactivity_timer.timeout.connect(
+            self.reset_poke_cycle_after_inactivity
         )
 
         # ---------- 线上动作 ----------
@@ -1641,6 +1659,14 @@ class DesktopPet(QLabel):
             self.load_image("walkright1.PNG"),
             self.load_image("walkright2.PNG"),
         ]
+        self.run_left = [
+            self.load_image("runleft1.PNG"),
+            self.load_image("runleft2.PNG"),
+        ]
+        self.run_right = [
+            self.load_image("runright1.PNG"),
+            self.load_image("runright2.PNG"),
+        ]
         self.sleep_frames = [
             self.load_image("sleep1.PNG"),
             self.load_image("sleep2.PNG"),
@@ -1655,7 +1681,10 @@ class DesktopPet(QLabel):
             self.settings["sleep_frame_interval"]
         )
 
-    def reload_settings_and_messages(self):
+    def reload_settings_and_messages(
+        self,
+        announce=True,
+    ):
         """重新载入，并保持果子的位置不漂移。"""
 
         debug_log(
@@ -1679,8 +1708,9 @@ class DesktopPet(QLabel):
             self.load_all_images()
             self.apply_timer_settings()
         except (OSError, ValueError, FileNotFoundError):
-            self.say("重新载入失败，请检查文件。")
-            return
+            if announce:
+                self.say("重新载入失败，请检查文件。")
+            return False
 
         self.setFixedSize(self.normal.size())
 
@@ -1722,7 +1752,11 @@ class DesktopPet(QLabel):
             f"reload end state={self.state} "
             f"dragging={self.is_dragging}"
         )
-        self.say("设置、台词和动作已重新载入。")
+
+        if announce:
+            self.say("设置、台词和动作已重新载入。")
+
+        return True
 
     def download_text(self, url):
         """从指定网址下载 UTF-8 文本，并绕过旧缓存。"""
@@ -2629,6 +2663,618 @@ class DesktopPet(QLabel):
                 repr(exc)
             )
 
+    def remove_update_path(self, path):
+        """删除更新事务里的临时文件或目录。"""
+
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    def resource_update_targets(self):
+        """返回事务管理的固定资源目标。"""
+
+        return {
+            "messages.txt": MESSAGES_FILE,
+            "settings.json": SETTINGS_FILE,
+            "actions.json": ACTIONS_FILE,
+            "greetings.json": GREETINGS_FILE,
+            "online_images": ONLINE_IMAGE_DIR,
+            "online_sounds": ONLINE_SOUND_DIR,
+        }
+
+    def read_update_journal(self):
+        if not UPDATE_JOURNAL_FILE.exists():
+            return None
+
+        try:
+            data = json.loads(
+                UPDATE_JOURNAL_FILE.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            if not isinstance(data, dict):
+                return None
+
+            original_exists = data.get(
+                "original_exists",
+                {},
+            )
+
+            if not isinstance(
+                original_exists,
+                dict,
+            ):
+                return None
+
+            return data
+
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):
+            return None
+
+    def rollback_resource_update(self):
+        """按 journal 恢复更新前的整套资源。"""
+
+        journal = self.read_update_journal()
+
+        if journal is None:
+            debug_log(
+                "resource rollback skipped: "
+                "journal unreadable"
+            )
+            return False
+
+        original_exists = journal.get(
+            "original_exists",
+            {},
+        )
+
+        targets = self.resource_update_targets()
+
+        try:
+            # Windows 下先释放可能仍指向旧 sounds 目录的 Qt 缓存。
+            self.release_action_sound_cache()
+
+            for name, final_path in targets.items():
+                backup_path = (
+                    UPDATE_BACKUP_DIR / name
+                )
+                existed_before = bool(
+                    original_exists.get(
+                        name,
+                        False,
+                    )
+                )
+
+                if backup_path.exists():
+                    self.remove_update_path(
+                        final_path
+                    )
+                    backup_path.replace(
+                        final_path
+                    )
+
+                elif not existed_before:
+                    # 原先不存在，但可能已经装入了新版；
+                    # 回滚时把这个新目标删掉。
+                    self.remove_update_path(
+                        final_path
+                    )
+
+                # existed_before=True 且没有 backup：
+                # 表示崩溃发生在该目标还没被移动前，
+                # 原文件仍在原位，不能删。
+
+            self.remove_update_path(
+                UPDATE_STAGE_DIR
+            )
+            self.remove_update_path(
+                UPDATE_BACKUP_DIR
+            )
+
+            try:
+                UPDATE_JOURNAL_FILE.unlink(
+                    missing_ok=True
+                )
+            except OSError:
+                pass
+
+            debug_log(
+                "resource rollback completed"
+            )
+            return True
+
+        except OSError as exc:
+            debug_log(
+                f"resource rollback failed {exc!r}"
+            )
+            return False
+
+    def recover_interrupted_resource_update(self):
+        """启动时恢复上次未完成的资源事务。"""
+
+        if UPDATE_JOURNAL_FILE.exists():
+            debug_log(
+                "interrupted resource update found"
+            )
+            self.rollback_resource_update()
+            return
+
+        # 没有 journal 时，这些只是上次成功后没来得及清理
+        # 或很早以前遗留的临时目录，可以安全删除。
+        self.remove_update_path(
+            UPDATE_STAGE_DIR
+        )
+        self.remove_update_path(
+            UPDATE_BACKUP_DIR
+        )
+
+    def normalized_update_texts(
+        self,
+        package,
+    ):
+        """验证四个文本配置，并返回标准化后的最终文本。"""
+
+        messages_text = package[
+            "messages_text"
+        ]
+        settings_text = package[
+            "settings_text"
+        ]
+        actions_text = package[
+            "actions_text"
+        ]
+        greetings_text = package[
+            "greetings_text"
+        ]
+
+        message_lines = [
+            line.strip()
+            for line in messages_text.splitlines()
+            if line.strip()
+        ]
+
+        if not message_lines:
+            raise ValueError(
+                "在线台词文件为空。"
+            )
+
+        settings_data = json.loads(
+            settings_text
+        )
+
+        if not isinstance(
+            settings_data,
+            dict,
+        ):
+            raise ValueError(
+                "在线设置文件格式错误。"
+            )
+
+        # 每台电脑自己的移动模式继续保留。
+        settings_data["movement_mode"] = (
+            self.settings.get(
+                "movement_mode",
+                "horizontal",
+            )
+        )
+
+        actions_data = json.loads(
+            actions_text
+        )
+
+        if (
+            not isinstance(
+                actions_data,
+                dict,
+            )
+            or not isinstance(
+                actions_data.get(
+                    "actions",
+                    [],
+                ),
+                list,
+            )
+        ):
+            raise ValueError(
+                "在线动作文件格式错误。"
+            )
+
+        greetings_data = json.loads(
+            greetings_text
+        )
+
+        if (
+            not isinstance(
+                greetings_data,
+                dict,
+            )
+            or not isinstance(
+                greetings_data.get(
+                    "greetings",
+                    {},
+                ),
+                dict,
+            )
+        ):
+            raise ValueError(
+                "在线问候语文件格式错误。"
+            )
+
+        raw_greetings = greetings_data[
+            "greetings"
+        ]
+
+        for key in DEFAULT_GREETINGS:
+            items = raw_greetings.get(key)
+
+            if (
+                not isinstance(
+                    items,
+                    list,
+                )
+                or not any(
+                    isinstance(item, str)
+                    and item.strip()
+                    for item in items
+                )
+            ):
+                raise ValueError(
+                    f"问候语分类无效：{key}"
+                )
+
+        return {
+            "messages.txt": (
+                "\n".join(
+                    message_lines
+                )
+                + "\n"
+            ),
+            "settings.json": (
+                json.dumps(
+                    settings_data,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            ),
+            "actions.json": (
+                json.dumps(
+                    actions_data,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            ),
+            "greetings.json": (
+                json.dumps(
+                    greetings_data,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            ),
+        }
+
+    def stage_resource_update(
+        self,
+        package,
+    ):
+        """把完整的新资源先验证并写入独立 staging 目录。"""
+
+        self.remove_update_path(
+            UPDATE_STAGE_DIR
+        )
+
+        UPDATE_STAGE_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        stage_images = (
+            UPDATE_STAGE_DIR
+            / "online_images"
+        )
+        stage_sounds = (
+            UPDATE_STAGE_DIR
+            / "online_sounds"
+        )
+
+        stage_images.mkdir()
+        stage_sounds.mkdir()
+
+        normalized_texts = (
+            self.normalized_update_texts(
+                package
+            )
+        )
+
+        for filename, text in (
+            normalized_texts.items()
+        ):
+            (
+                UPDATE_STAGE_DIR
+                / filename
+            ).write_text(
+                text,
+                encoding="utf-8",
+            )
+
+        image_count = 0
+
+        for filename, data in (
+            package["image_data"].items()
+        ):
+            safe_name = (
+                self.sanitize_action_filename(
+                    filename
+                )
+            )
+
+            if safe_name is None:
+                raise ValueError(
+                    "图片文件名不安全。"
+                )
+
+            pixmap = QPixmap()
+            pixmap.loadFromData(data)
+
+            if pixmap.isNull():
+                raise ValueError(
+                    f"图片无法读取：{safe_name}"
+                )
+
+            (
+                stage_images / safe_name
+            ).write_bytes(data)
+            image_count += 1
+
+        changed_sound_count = 0
+
+        for filename, data in (
+            package["sound_data"].items()
+        ):
+            safe_name = (
+                self.sanitize_action_sound_filename(
+                    filename
+                )
+            )
+
+            if safe_name is None:
+                raise ValueError(
+                    "动作音效文件名不安全。"
+                )
+
+            if len(data) > MAX_ACTION_SOUND_BYTES:
+                raise ValueError(
+                    "动作音效文件过大。"
+                )
+
+            staged_sound = (
+                stage_sounds / safe_name
+            )
+            staged_sound.write_bytes(data)
+
+            try:
+                with wave.open(
+                    str(staged_sound),
+                    "rb",
+                ) as wav_file:
+                    if (
+                        wav_file.getnchannels()
+                        < 1
+                        or wav_file.getframerate()
+                        < 1
+                        or wav_file.getnframes()
+                        < 1
+                    ):
+                        raise ValueError(
+                            "动作音效内容为空。"
+                        )
+            except (
+                wave.Error,
+                EOFError,
+                OSError,
+            ) as error:
+                raise ValueError(
+                    f"动作音效无法读取："
+                    f"{safe_name}"
+                ) from error
+
+            current_sound = (
+                ONLINE_SOUND_DIR
+                / safe_name
+            )
+
+            try:
+                unchanged = (
+                    current_sound.exists()
+                    and current_sound.read_bytes()
+                    == data
+                )
+            except OSError:
+                unchanged = False
+
+            if not unchanged:
+                changed_sound_count += 1
+
+        expected_images = {
+            self.sanitize_action_filename(
+                name
+            )
+            for name in package[
+                "image_filenames"
+            ]
+        }
+        expected_sounds = {
+            self.sanitize_action_sound_filename(
+                name
+            )
+            for name in package[
+                "sound_filenames"
+            ]
+        }
+
+        if (
+            None in expected_images
+            or None in expected_sounds
+        ):
+            raise ValueError(
+                "线上资源清单包含不安全文件名。"
+            )
+
+        staged_images = {
+            path.name
+            for path in stage_images.iterdir()
+            if path.is_file()
+        }
+        staged_sounds = {
+            path.name
+            for path in stage_sounds.iterdir()
+            if path.is_file()
+        }
+
+        if staged_images != expected_images:
+            raise ValueError(
+                "图片 staging 清单不完整。"
+            )
+
+        if staged_sounds != expected_sounds:
+            raise ValueError(
+                "音效 staging 清单不完整。"
+            )
+
+        old_images = set()
+
+        if ONLINE_IMAGE_DIR.exists():
+            old_images = {
+                path.name
+                for path in ONLINE_IMAGE_DIR.iterdir()
+                if path.is_file()
+            }
+
+        old_sounds = set()
+
+        if ONLINE_SOUND_DIR.exists():
+            old_sounds = {
+                path.name
+                for path in ONLINE_SOUND_DIR.iterdir()
+                if path.is_file()
+            }
+
+        return {
+            "image_count": image_count,
+            "sound_count": changed_sound_count,
+            "deleted_images": len(
+                old_images
+                - expected_images
+            ),
+            "deleted_sounds": len(
+                old_sounds
+                - expected_sounds
+            ),
+        }
+
+    def begin_resource_update_commit(self):
+        """备份整套旧资源，再把 staging 整套替换进去。"""
+
+        self.remove_update_path(
+            UPDATE_BACKUP_DIR
+        )
+        UPDATE_BACKUP_DIR.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        targets = self.resource_update_targets()
+
+        journal_data = {
+            "started_at": datetime.now().isoformat(),
+            "original_exists": {
+                name: path.exists()
+                for name, path in targets.items()
+            },
+        }
+
+        UPDATE_JOURNAL_FILE.write_text(
+            json.dumps(
+                journal_data,
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        try:
+            # 先把旧的一整套全部移进 backup。
+            for name, final_path in (
+                targets.items()
+            ):
+                if final_path.exists():
+                    backup_path = (
+                        UPDATE_BACKUP_DIR
+                        / name
+                    )
+                    final_path.replace(
+                        backup_path
+                    )
+
+            # 再把 staging 的一整套装到正式位置。
+            for name, final_path in (
+                targets.items()
+            ):
+                staged_path = (
+                    UPDATE_STAGE_DIR / name
+                )
+
+                if not staged_path.exists():
+                    raise ValueError(
+                        f"staging 缺少：{name}"
+                    )
+
+                staged_path.replace(
+                    final_path
+                )
+
+            debug_log(
+                "resource transaction committed "
+                "pending reload"
+            )
+
+        except Exception:
+            self.rollback_resource_update()
+            raise
+
+    def finalize_resource_update(self):
+        """新资源成功载入后，正式提交并清理旧备份。"""
+
+        try:
+            UPDATE_JOURNAL_FILE.unlink(
+                missing_ok=True
+            )
+        except OSError:
+            pass
+
+        self.remove_update_path(
+            UPDATE_BACKUP_DIR
+        )
+        self.remove_update_path(
+            UPDATE_STAGE_DIR
+        )
+
+        debug_log(
+            "resource transaction finalized"
+        )
+
     def apply_downloaded_images(self, image_data):
         """主线程验证并替换已经下载好的图片。"""
 
@@ -2778,9 +3424,11 @@ class DesktopPet(QLabel):
         )
 
     def try_apply_pending_online_update(self):
-        """等待当前动画/拖动结束后再应用已下载的更新。"""
+        """等待安全状态，然后整套事务式替换在线资源。"""
 
-        package = self.pending_online_update_package
+        package = (
+            self.pending_online_update_package
+        )
 
         if package is None:
             self.pending_update_timer.stop()
@@ -2792,38 +3440,40 @@ class DesktopPet(QLabel):
         self.pending_update_timer.stop()
         self.pending_online_update_package = None
 
+        transaction_started = False
+
         try:
             debug_log(
-                "update apply start "
-                f"state={self.state} dragging={self.is_dragging}"
+                "update transaction start "
+                f"state={self.state} "
+                f"dragging={self.is_dragging}"
             )
 
             self.update_used_backup = bool(
-                package.get("used_backup", False)
-            )
-
-            image_count = self.apply_downloaded_images(
-                package["image_data"]
-            )
-            sound_count = self.apply_downloaded_sounds(
-                package["sound_data"]
-            )
-
-            self.write_update_files(
-                package["messages_text"],
-                package["settings_text"],
-                package["actions_text"],
-                package["greetings_text"],
-            )
-
-            deleted_images, deleted_sounds = (
-                self.cleanup_online_assets(
-                    package["image_filenames"],
-                    package["sound_filenames"],
+                package.get(
+                    "used_backup",
+                    False,
                 )
             )
 
-            self.reload_settings_and_messages()
+            stats = self.stage_resource_update(
+                package
+            )
+
+            self.release_action_sound_cache()
+
+            self.begin_resource_update_commit()
+            transaction_started = True
+
+            if not self.reload_settings_and_messages(
+                announce=False
+            ):
+                raise ValueError(
+                    "新版资源载入失败。"
+                )
+
+            self.finalize_resource_update()
+            transaction_started = False
 
             route_text = (
                 "，已使用备用线路"
@@ -2838,10 +3488,14 @@ class DesktopPet(QLabel):
 
             cleanup_text = ""
 
-            if deleted_images or deleted_sounds:
+            if (
+                stats["deleted_images"]
+                or stats["deleted_sounds"]
+            ):
                 cleanup_text = (
-                    f"，已清理 {deleted_images} 张旧图片、"
-                    f"{deleted_sounds} 个旧音效"
+                    f"，已清理 "
+                    f"{stats['deleted_images']} 张旧图片、"
+                    f"{stats['deleted_sounds']} 个旧音效"
                 )
 
             self.say(
@@ -2850,14 +3504,14 @@ class DesktopPet(QLabel):
                 f"共 {len(self.messages)} 句台词，"
                 f"{greeting_count} 句问候，"
                 f"{len(self.actions)} 个动作，"
-                f"已同步 {image_count} 张图片，"
-                f"更新了 {sound_count} 个音效"
+                f"已同步 {stats['image_count']} 张图片，"
+                f"更新了 {stats['sound_count']} 个音效"
                 f"{cleanup_text}"
                 f"{route_text}。"
             )
 
             debug_log(
-                "update apply finished "
+                "update transaction finished "
                 f"state={self.state}"
             )
 
@@ -2870,22 +3524,45 @@ class DesktopPet(QLabel):
             json.JSONDecodeError,
         ) as exc:
             debug_log(
-                f"update apply failed {exc!r}"
+                f"update transaction failed "
+                f"{exc!r}"
             )
+
             print(
                 "在线更新应用失败：",
                 repr(exc),
             )
 
+            if (
+                transaction_started
+                or UPDATE_JOURNAL_FILE.exists()
+            ):
+                if self.rollback_resource_update():
+                    # 把内存也恢复到旧资源。
+                    self.reload_settings_and_messages(
+                        announce=False
+                    )
+
+            else:
+                self.remove_update_path(
+                    UPDATE_STAGE_DIR
+                )
+
             try:
                 self.refresh_action_sound_cache()
-            except (OSError, RuntimeError):
+            except (
+                OSError,
+                RuntimeError,
+            ):
                 pass
 
-            self.say("检查更新失败，请稍后再试。")
+            self.say(
+                "检查更新失败，已保留上一版。"
+            )
 
         finally:
             self.update_in_progress = False
+
 
     def finish_online_update_failure(self, error_text):
         """后台下载失败；保留本地最后一份可用内容。"""
@@ -3431,11 +4108,23 @@ class DesktopPet(QLabel):
     # ---------- 开心 ----------
 
     def reset_poke_cycle(self):
-        """逃跑反应结束后，从第一轮三连戳重新开始。"""
+        """把整套连戳轮次清零。"""
 
+        self.poke_inactivity_timer.stop()
         self.poke_group_count = 0
         self.poke_warning_count = 0
         self.poke_cycle_reset_pending = False
+
+    def reset_poke_cycle_after_inactivity(self):
+        """超过 2 秒没有新的有效戳击时，重新从第一下开始。"""
+
+        if self.poke_input_locked:
+            return
+
+        debug_log(
+            "poke cycle reset after inactivity"
+        )
+        self.reset_poke_cycle()
 
     def register_poke(self):
         """记录一次有效戳击，并返回本次应触发的动作事件。"""
@@ -3443,13 +4132,17 @@ class DesktopPet(QLabel):
         if self.poke_input_locked:
             return None
 
+        self.poke_inactivity_timer.stop()
         self.poke_group_count += 1
 
         # 每组前两下都只是普通被戳反应。
         if self.poke_group_count < 3:
+            self.poke_inactivity_timer.start()
             return "single_click"
 
         # 第三下消费掉这一组计数。
+        # 特殊反应播放期间暂停 inactivity 计时；
+        # 等动作 + 0.5 秒锁结束后再重新开始。
         self.poke_group_count = 0
         self.poke_input_locked = True
 
@@ -3512,6 +4205,11 @@ class DesktopPet(QLabel):
 
         if self.poke_cycle_reset_pending:
             self.reset_poke_cycle()
+            return
+
+        # 前两组三连戳结束后，给下一组 2 秒的连续操作窗口。
+        # 超过这个时间没有继续戳，整套计数重新开始。
+        self.poke_inactivity_timer.start()
 
     def double_click_reaction(self):
         """双击果子的专属反应。"""
@@ -4729,6 +5427,38 @@ class DesktopPet(QLabel):
             ),
         )
 
+    def show_custom_action_run_frame(
+        self,
+        start,
+        target,
+    ):
+        """给逃跑类 custom motion 显示左右跑步贴图。"""
+
+        direction = (
+            -1
+            if target.x() < start.x()
+            else 1
+        )
+
+        frames = (
+            self.run_left
+            if direction == -1
+            else self.run_right
+        )
+
+        elapsed_ms = (
+            time.monotonic()
+            - self.custom_action_step_started
+        ) * 1000.0
+
+        frame_index = int(
+            elapsed_ms // 120
+        ) % len(frames)
+
+        self.setPixmap(
+            frames[frame_index]
+        )
+
     def update_custom_action_step(self):
         """驱动当前动作步骤。"""
 
@@ -4811,6 +5541,12 @@ class DesktopPet(QLabel):
         ):
             start = self.custom_action_step_start
             target = self.custom_action_step_target
+
+            if step_type == "move_away_mouse":
+                self.show_custom_action_run_frame(
+                    start,
+                    target,
+                )
 
             x = round(
                 start.x()
@@ -5537,12 +6273,25 @@ class DesktopPet(QLabel):
         self.walk_move_timer.start()
         self.walk_animation_timer.start()
 
-    def show_current_walk_frame(self):
-        frames = (
+    def current_movement_frames(self):
+        """普通散步用 walk；双击召唤的快速移动用 run。"""
+
+        if self.summon_run_active:
+            return (
+                self.run_left
+                if self.walk_direction == -1
+                else self.run_right
+            )
+
+        return (
             self.walk_left
             if self.walk_direction == -1
             else self.walk_right
         )
+
+    def show_current_walk_frame(self):
+        frames = self.current_movement_frames()
+        self.walk_frame_index %= len(frames)
         self.setPixmap(
             frames[self.walk_frame_index]
         )
@@ -5552,13 +6301,10 @@ class DesktopPet(QLabel):
             self.walk_animation_timer.stop()
             return
 
+        frames = self.current_movement_frames()
         self.walk_frame_index = (
             self.walk_frame_index + 1
-        ) % len(
-            self.walk_left
-            if self.walk_direction == -1
-            else self.walk_right
-        )
+        ) % len(frames)
         self.show_current_walk_frame()
 
     def update_walking(self):
@@ -6827,6 +7573,7 @@ class DesktopPet(QLabel):
         self.custom_action_timer.stop()
         self.random_action_timer.stop()
         self.poke_cooldown_timer.stop()
+        self.poke_inactivity_timer.stop()
         self.audio_keepalive_timer.stop()
         self.stop_action_sound()
         self.global_mouse_timer.stop()
@@ -6844,6 +7591,7 @@ class DesktopPet(QLabel):
         self.custom_action_timer.stop()
         self.random_action_timer.stop()
         self.pending_update_timer.stop()
+        self.poke_inactivity_timer.stop()
         self.audio_keepalive_timer.stop()
         self.stop_action_sound()
         self.global_mouse_timer.stop()
