@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 28
+APP_BUILD_VERSION = 30
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -190,6 +190,12 @@ def keep_widget_topmost(widget):
         )
     except (AttributeError, OSError, TypeError, ValueError):
         pass
+
+
+WALK_FRAME_INTERVAL_MS = 160
+RUN_FRAME_INTERVAL_MS = 90
+RUN_SPEED_MULTIPLIER = 4.0
+MIN_RUN_STEP = 8.0
 
 
 DEFAULT_SETTINGS = {
@@ -566,6 +572,10 @@ class DesktopPet(QLabel):
         self.edge_crawl_side = 0
         self.edge_crawl_direction = 0
 
+        # 横向散步里大部分会专门走到最近的屏幕边缘，
+        # 这样爬墙动作不会只能靠偶然撞墙才能触发。
+        self.horizontal_walk_to_edge = False
+
         self.summon_run_active = False
         self.global_left_was_down = False
         self.global_first_click_time = 0.0
@@ -740,7 +750,7 @@ class DesktopPet(QLabel):
         )
 
         self.walk_animation_timer = QTimer(self)
-        self.walk_animation_timer.setInterval(160)
+        self.walk_animation_timer.setInterval(WALK_FRAME_INTERVAL_MS)
         self.walk_animation_timer.timeout.connect(
             self.update_walk_frame
         )
@@ -5585,8 +5595,37 @@ class DesktopPet(QLabel):
                 self.y(),
             )
 
+        duration_ms = int(
+            step["duration"]
+        )
+
+        if step_type == "move_away_mouse":
+            target = self.custom_action_step_target
+            start = self.custom_action_step_start
+
+            actual_distance = math.hypot(
+                target.x() - start.x(),
+                target.y() - start.y(),
+            )
+
+            duration_ms = max(
+                120,
+                round(
+                    actual_distance
+                    / self.run_step_speed()
+                    * 30.0
+                ),
+            )
+
+            debug_log(
+                "escape run speed "
+                f"distance={actual_distance:.1f} "
+                f"duration_ms={duration_ms} "
+                f"run_step={self.run_step_speed():.1f}"
+            )
+
         self.start_timed_custom_step(
-            int(step["duration"])
+            duration_ms
         )
 
     def custom_action_progress(self):
@@ -5655,7 +5694,8 @@ class DesktopPet(QLabel):
         ) * 1000.0
 
         frame_index = int(
-            elapsed_ms // 120
+            elapsed_ms
+            // RUN_FRAME_INTERVAL_MS
         ) % len(frames)
 
         self.setPixmap(
@@ -6160,6 +6200,18 @@ class DesktopPet(QLabel):
         self.global_first_click_point = QPoint(point)
         self.global_first_click_time = now
 
+    def run_step_speed(self):
+        """返回跑步每个移动 tick 的位移，始终明显快于散步。"""
+
+        walk_speed = float(
+            self.settings["walk_speed"]
+        )
+
+        return max(
+            MIN_RUN_STEP,
+            walk_speed * RUN_SPEED_MULTIPLIER,
+        )
+
     def run_to_screen_point(self, point):
         """让果子快速跑到双击位置附近。"""
 
@@ -6204,12 +6256,7 @@ class DesktopPet(QLabel):
             self.resume_normal_schedules()
             return
 
-        speed = max(
-            6.0,
-            float(
-                self.settings["walk_speed"]
-            ) * 3.0,
-        )
+        speed = self.run_step_speed()
 
         self.state = "walking"
         self.summon_run_active = True
@@ -6226,6 +6273,9 @@ class DesktopPet(QLabel):
         )
         self.walk_frame_index = 0
 
+        self.walk_animation_timer.setInterval(
+            RUN_FRAME_INTERVAL_MS
+        )
         self.show_current_walk_frame()
         self.walk_move_timer.start()
         self.walk_animation_timer.start()
@@ -6276,6 +6326,9 @@ class DesktopPet(QLabel):
             self.start_horizontal_walk()
 
     def start_horizontal_walk(self):
+        self.walk_animation_timer.setInterval(
+            WALK_FRAME_INTERVAL_MS
+        )
         """沿当前高度左右散步。"""
 
         self.edge_crawl_active = False
@@ -6336,9 +6389,100 @@ class DesktopPet(QLabel):
             return
 
         self.state = "walking"
-        self.walk_direction = random.choice(
-            possible_directions
+
+        # 70% 的横向散步会主动去最近的边缘。
+        # 剩下 30% 还是普通随便走一段，避免果子每次散步都在扒墙。
+        self.horizontal_walk_to_edge = (
+            random.random() < 0.70
         )
+
+        if self.horizontal_walk_to_edge:
+            actual_left_limit = area.left()
+            actual_right_limit = (
+                area.right()
+                - self.width()
+                + 1
+            )
+
+            actual_left_space = max(
+                0,
+                self.x()
+                - actual_left_limit,
+            )
+            actual_right_space = max(
+                0,
+                actual_right_limit
+                - self.x(),
+            )
+
+            # 优先走最近的墙，触发更快；距离一样时随机。
+            if (
+                actual_left_space
+                < actual_right_space
+            ):
+                self.walk_direction = -1
+            elif (
+                actual_right_space
+                < actual_left_space
+            ):
+                self.walk_direction = 1
+            else:
+                self.walk_direction = random.choice(
+                    possible_directions
+                )
+
+            distance_to_wall = (
+                actual_left_space
+                if self.walk_direction == -1
+                else actual_right_space
+            )
+
+            # 多给 2 步，确保会真的碰到 safe_coordinates 的边界，
+            # 而不是刚好停在边缘前。
+            self.walk_steps_left = max(
+                1,
+                math.ceil(
+                    distance_to_wall
+                    / self.settings["walk_speed"]
+                )
+                + 2,
+            )
+
+            debug_log(
+                "horizontal walk seeks edge "
+                f"direction={'left' if self.walk_direction == -1 else 'right'} "
+                f"distance={distance_to_wall}"
+            )
+
+        else:
+            self.walk_direction = random.choice(
+                possible_directions
+            )
+
+            available_distance = (
+                left_space
+                if self.walk_direction == -1
+                else right_space
+            )
+            maximum_steps = max(
+                1,
+                available_distance
+                // self.settings["walk_speed"],
+            )
+            upper_steps = min(
+                150,
+                maximum_steps,
+            )
+            lower_steps = min(
+                60,
+                upper_steps,
+            )
+
+            self.walk_steps_left = random.randint(
+                max(1, lower_steps),
+                max(1, upper_steps),
+            )
+
         self.walk_velocity_x = float(
             self.settings["walk_speed"]
             * self.walk_direction
@@ -6346,24 +6490,6 @@ class DesktopPet(QLabel):
         self.walk_velocity_y = 0.0
         self.walk_float_x = float(self.x())
         self.walk_float_y = float(self.y())
-
-        available_distance = (
-            left_space
-            if self.walk_direction == -1
-            else right_space
-        )
-        maximum_steps = max(
-            1,
-            available_distance
-            // self.settings["walk_speed"],
-        )
-        upper_steps = min(150, maximum_steps)
-        lower_steps = min(60, upper_steps)
-
-        self.walk_steps_left = random.randint(
-            max(1, lower_steps),
-            max(1, upper_steps),
-        )
         self.walk_frame_index = 0
 
         self.show_current_walk_frame()
@@ -6371,6 +6497,9 @@ class DesktopPet(QLabel):
         self.walk_animation_timer.start()
 
     def start_full_screen_walk(self):
+        self.walk_animation_timer.setInterval(
+            WALK_FRAME_INTERVAL_MS
+        )
         """在当前屏幕可用区域里选择目标点并斜向移动。"""
 
         center = QPoint(
@@ -6679,6 +6808,7 @@ class DesktopPet(QLabel):
             max(1, maximum_distance),
         )
 
+        self.horizontal_walk_to_edge = False
         self.edge_crawl_active = True
         self.edge_crawl_side = side
         self.edge_crawl_direction = (
@@ -6910,7 +7040,11 @@ class DesktopPet(QLabel):
         self.walk_wait_timer.stop()
         self.walk_move_timer.stop()
         self.walk_animation_timer.stop()
+        self.walk_animation_timer.setInterval(
+            WALK_FRAME_INTERVAL_MS
+        )
         self.summon_run_active = False
+        self.horizontal_walk_to_edge = False
         self.edge_crawl_active = False
         self.edge_crawl_side = 0
         self.edge_crawl_direction = 0
