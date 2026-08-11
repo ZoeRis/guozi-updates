@@ -4,6 +4,7 @@ import os
 import runpy
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -30,6 +31,7 @@ NETWORK_TIMEOUT = 6
 # 未来如果 app.py 需要新的启动器能力，
 # 先在线更新 launcher.py，再提高 manifest 里的 app_api。
 SUPPORTED_APP_API = 1
+LAUNCHER_BUILD_VERSION = 24
 
 
 def base_dir():
@@ -58,6 +60,22 @@ def current_file_hash(path):
         return sha256_bytes(path.read_bytes())
     except OSError:
         return None
+
+
+def cache_busted_urls(urls):
+    """给版本清单网址加毫秒时间戳，尽量绕开中间缓存。"""
+
+    stamp = int(time.time() * 1000)
+
+    result = []
+
+    for index, url in enumerate(urls):
+        separator = "&" if "?" in url else "?"
+        result.append(
+            f"{url}{separator}guozi_cb={stamp + index}"
+        )
+
+    return tuple(result)
 
 
 def download_bytes(url, max_bytes):
@@ -269,7 +287,9 @@ def check_code_update():
 
     try:
         version_bytes = download_from_sources(
-            VERSION_URLS,
+            cache_busted_urls(
+                VERSION_URLS
+            ),
             MAX_VERSION_BYTES,
         )
 

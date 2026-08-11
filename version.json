@@ -1,5 +1,5 @@
 {
-  "version": "4.2-online-update-test",
+  "version": "4.3-launcher-online-update-test",
   "app_version": 23,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
@@ -27,7 +27,7 @@
   ],
   "app_api": 1,
   "app_sha256": "e330e60a1ad367d099ae6d2b63564da391753771ef64d061968f46bcd7b7cc6e",
-  "launcher_version": 17,
+  "launcher_version": 24,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
-  "launcher_sha256": "44301137af031d4144a504f757a2134c756f22bdd052cf271316f4f58b111b84"
+  "launcher_sha256": "261de3799bc5687bb32426b97fa2c1bf8bbe7281e12b40cbf62395f8d11f21a1"
 }
