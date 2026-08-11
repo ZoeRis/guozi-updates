@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 36
+APP_BUILD_VERSION = 37
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -7133,31 +7133,105 @@ class DesktopPet(QLabel):
         )
 
         speed = max(
-            1,
-            self.settings["walk_speed"],
+            1.5,
+            float(self.settings["walk_speed"]),
         )
 
-        self.walk_velocity_x = float(
-            speed
-            * self.walk_direction
-        )
-        self.walk_velocity_y = 0.0
         self.walk_float_x = float(
             self.x()
         )
         self.walk_float_y = float(
             self.y()
         )
+        self.walk_frame_index = 0
 
-        # 离开墙面后再走一段，避免刚爬完马上又撞回同一边。
+        # 满屏模式必须重新建立一个“离开墙面”的新目标。
+        # 旧版本这里仍保留着爬墙前的 walk_target_x/y，
+        # 所以 update_full_screen_walking 会在几秒后把果子
+        # 瞬移回旧墙点，再重新开始走。
+        if (
+            self.settings["movement_mode"]
+            == "full_screen"
+        ):
+            area = self.current_action_screen_area()
+
+            if area is None:
+                self.stop_walking()
+                return
+
+            left_limit = area.left()
+            right_limit = (
+                area.right()
+                - self.width()
+                + 1
+            )
+
+            current_x = self.x()
+            current_y = self.y()
+
+            available_inward = (
+                right_limit - current_x
+                if self.walk_direction == 1
+                else current_x - left_limit
+            )
+
+            if available_inward <= 0:
+                self.stop_walking()
+                return
+
+            # 爬完后先真正离开墙一段距离。
+            # 目标点写进 full-screen walker，
+            # 后续就不会再引用爬墙前的旧目标。
+            leave_distance = min(
+                available_inward,
+                random.randint(150, 280),
+            )
+
+            self.walk_target_x = round(
+                current_x
+                + self.walk_direction
+                * leave_distance
+            )
+            self.walk_target_y = current_y
+
+            self.walk_velocity_x = float(
+                speed * self.walk_direction
+            )
+            self.walk_velocity_y = 0.0
+
+            self.walk_steps_left = max(
+                1,
+                math.ceil(
+                    leave_distance / speed
+                ),
+            )
+
+            self.full_screen_walk_to_edge = False
+            self.full_screen_edge_side = 0
+
+            debug_log(
+                "edge crawl finish full-screen "
+                f"turn={'right' if self.walk_direction == 1 else 'left'} "
+                f"new_target=({self.walk_target_x},{self.walk_target_y})"
+            )
+
+            self.show_current_walk_frame()
+            return
+
+        # 横向模式沿用原来的离墙逻辑。
+        self.walk_velocity_x = float(
+            speed
+            * self.walk_direction
+        )
+        self.walk_velocity_y = 0.0
+
         self.walk_steps_left = random.randint(
             45,
             95,
         )
-        self.walk_frame_index = 0
 
         debug_log(
-            "edge crawl finish "
+            "edge crawl finish horizontal "
             f"turn={'right' if self.walk_direction == 1 else 'left'}"
         )
 

@@ -1,6 +1,6 @@
 {
-  "version": "5.5-wake-fix-run-speed-restore",
-  "app_version": 36,
+  "version": "5.6-climb-snapback-fix",
+  "app_version": 37,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -30,7 +30,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "5d4215da40a9d45cdc0317f45fe62f6711745ccce2a7217b7ec3ad95de3f4ef2",
+  "app_sha256": "ee46358cf85d9a059f92679e0e351bc1b65342ea9a289bd711c30cc3634712cc",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"
