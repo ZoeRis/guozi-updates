@@ -55,6 +55,7 @@ else:
     ASSET_DIR = APP_DIR
 
 IMAGE_DIR = ASSET_DIR / "images"
+SOUND_DIR = ASSET_DIR / "sounds"
 POSITION_FILE = APP_DIR / "position.json"
 SETTINGS_FILE = APP_DIR / "settings.json"
 MESSAGES_FILE = APP_DIR / "messages.txt"
@@ -63,6 +64,8 @@ GREETINGS_FILE = APP_DIR / "greetings.json"
 ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
+
+APP_BUILD_VERSION = 23
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -4496,10 +4499,20 @@ class DesktopPet(QLabel):
             if effect is not None:
                 yield effect
 
+    def action_sound_path(self, filename):
+        """线上音效优先；没有时回退到打包自带 sounds。"""
+
+        online_path = ONLINE_SOUND_DIR / filename
+
+        if online_path.exists():
+            return online_path
+
+        return SOUND_DIR / filename
+
     def create_sound_effect(self, filename):
         """为一个 WAV 建立一个长期复用的低延迟播放器。"""
 
-        sound_path = ONLINE_SOUND_DIR / filename
+        sound_path = self.action_sound_path(filename)
 
         if not sound_path.exists():
             return None
@@ -4839,7 +4852,7 @@ class DesktopPet(QLabel):
         if safe_name is None:
             return False
 
-        sound_path = ONLINE_SOUND_DIR / safe_name
+        sound_path = self.action_sound_path(safe_name)
 
         if not sound_path.exists():
             debug_log(
@@ -7688,7 +7701,9 @@ class DesktopPet(QLabel):
 
 
 def main():
-    debug_log("=== process start ===")
+    debug_log(
+        f"=== process start app_build={APP_BUILD_VERSION} ==="
+    )
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
 
