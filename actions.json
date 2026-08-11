@@ -1,5 +1,5 @@
 {
-  "version": 26,
+  "version": 27,
   "actions": [
     {
       "name": "开心摇摆",
@@ -15,8 +15,7 @@
     {
       "name": "轻轻蹦一下",
       "triggers": [
-        "manual",
-        "drag_release"
+        "manual"
       ],
       "steps": [
         {

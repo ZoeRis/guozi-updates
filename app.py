@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 37
+APP_BUILD_VERSION = 38
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -610,9 +610,11 @@ class DesktopPet(QLabel):
         # 松开拖动后的轻微回弹
         self.bounce_frame_index = 0
         self.bounce_base_position = None
+        # 松手落地：第一帧立即保持一点离地感，
+        # 随后快速落下，再做一次很小的二次回弹。
         self.bounce_offsets = [
-            0, -5, -9, -5, 0,
-            -3, -6, -3, 0,
+            -10, -4, 0,
+            -4, -1, 0,
         ]
 
         # 如果上次资源更新在替换文件途中异常退出，
@@ -807,7 +809,7 @@ class DesktopPet(QLabel):
         # ---------- 松手回弹 ----------
 
         self.bounce_timer = QTimer(self)
-        self.bounce_timer.setInterval(55)
+        self.bounce_timer.setInterval(45)
         self.bounce_timer.timeout.connect(
             self.update_release_bounce
         )
@@ -7697,8 +7699,14 @@ class DesktopPet(QLabel):
 
     # ---------- 松手回弹 ----------
 
+    def start_drag_release_landing(self):
+        """拖动松手后的即时落地反馈。"""
+
+        self.say("嘿咻！")
+        self.start_release_bounce()
+
     def start_release_bounce(self):
-        """松开拖动后，轻轻上下弹两次。"""
+        """松手瞬间开始落地回弹，不先显示一帧“已经落地”。"""
 
         self.bounce_timer.stop()
         self.bounce_base_position = QPoint(
@@ -7709,7 +7717,14 @@ class DesktopPet(QLabel):
 
         self.state = "bouncing"
         self.setPixmap(self.normal)
-        self.bounce_timer.start()
+
+        # 立即应用第一帧，不等待第一个 timer tick。
+        # stop_drag_animation() 和这里发生在同一个事件处理中，
+        # 所以屏幕上不会先刷新出 normal 落地状态再开始蹦。
+        self.update_release_bounce()
+
+        if self.state == "bouncing":
+            self.bounce_timer.start()
 
     def update_release_bounce(self):
         """按预设的高度变化播放回弹。"""
@@ -8533,10 +8548,7 @@ class DesktopPet(QLabel):
             self.try_apply_pending_online_update()
             return
 
-        if not self.play_trigger_action(
-            "drag_release"
-        ):
-            self.start_release_bounce()
+        self.start_drag_release_landing()
 
         self.try_apply_pending_online_update()
 
@@ -8561,10 +8573,7 @@ class DesktopPet(QLabel):
             self.setPixmap(self.normal)
 
         if was_active and trigger_landing:
-            if not self.play_trigger_action(
-                "drag_release"
-            ):
-                self.start_release_bounce()
+            self.start_drag_release_landing()
 
         return was_active
 
@@ -8607,10 +8616,8 @@ class DesktopPet(QLabel):
             if not inertia_started:
                 if self.try_start_manual_edge_crawl():
                     pass
-                elif not self.play_trigger_action(
-                    "drag_release"
-                ):
-                    self.start_release_bounce()
+                else:
+                    self.start_drag_release_landing()
 
         else:
             self.finish_preserved_drag()
