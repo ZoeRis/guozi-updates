@@ -1,6 +1,6 @@
 {
-  "version": "2.9-diagnostic",
-  "app_version": 10,
+  "version": "3.0-mouse-update-refactor",
+  "app_version": 11,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
