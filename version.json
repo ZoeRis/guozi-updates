@@ -1,6 +1,6 @@
 {
-  "version": "3.0-mouse-update-refactor",
-  "app_version": 11,
+  "version": "3.1-pickup-rules",
+  "app_version": 12,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",

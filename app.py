@@ -6304,6 +6304,52 @@ class DesktopPet(QLabel):
 
     # ---------- 鼠标 ----------
 
+    def pickup_drag_is_allowed(self):
+        """判断当前动作能否被“提屁股”拖动直接接管。"""
+
+        if self.update_in_progress:
+            return False
+
+        if self.state in (
+            "normal",
+            "walking",
+            "bouncing",
+        ):
+            return True
+
+        if (
+            self.state == "custom_action"
+            and self.active_custom_action_trigger
+            == "drag_release"
+        ):
+            return True
+
+        return False
+
+    def prepare_for_pickup_drag(self):
+        """开始提屁股拖动前，只停止允许被打断的轻量动作。"""
+
+        if (
+            self.state == "custom_action"
+            and self.active_custom_action_trigger
+            == "drag_release"
+        ):
+            self.stop_custom_action(
+                resume=False
+            )
+
+        if self.state == "walking":
+            self.stop_walk_timers()
+
+        if self.state == "bouncing":
+            self.cancel_release_bounce()
+
+        self.cancel_release_bounce()
+        self.stop_walk_timers()
+        self.blink_wait_timer.stop()
+        self.blink_close_timer.stop()
+        self.sleep_wait_timer.stop()
+
     def mousePressEvent(self, event):
         if (
             event.button()
@@ -6353,21 +6399,18 @@ class DesktopPet(QLabel):
             ):
                 self.is_dragging = True
 
-                # 只有完全普通待机、且当前没有在线更新时，
-                # 才使用 drag1/drag2“提起来”动画。
-                # 其它任何动画/状态都只移动窗口，不改画面。
-                if (
-                    self.state == "normal"
-                    and not self.update_in_progress
-                ):
+                # 可随时拿起来的状态：
+                # normal / walking / bouncing /
+                # drag_release 的“嘿咻”动作。
+                # 其它动画继续采用“只移动、不换图”。
+                if self.pickup_drag_is_allowed():
                     debug_log(
-                        "drag mode=pickup"
+                        "drag mode=pickup "
+                        f"from_state={self.state} "
+                        f"trigger={self.active_custom_action_trigger}"
                     )
-                    self.cancel_release_bounce()
-                    self.stop_walk_timers()
-                    self.blink_wait_timer.stop()
-                    self.blink_close_timer.stop()
-                    self.sleep_wait_timer.stop()
+
+                    self.prepare_for_pickup_drag()
 
                     self.start_drag_animation(
                         current
@@ -6375,6 +6418,7 @@ class DesktopPet(QLabel):
                 else:
                     debug_log(
                         f"drag mode=preserve state={self.state} "
+                        f"trigger={self.active_custom_action_trigger} "
                         f"updating={self.update_in_progress}"
                     )
                     self.begin_preserved_drag()
