@@ -744,6 +744,14 @@ class DesktopPet(QLabel):
             self.update_drag_frame
         )
 
+        # ---------- 拖动松手保护 ----------
+
+        self.drag_release_watchdog = QTimer(self)
+        self.drag_release_watchdog.setInterval(40)
+        self.drag_release_watchdog.timeout.connect(
+            self.check_drag_release_watchdog
+        )
+
         # ---------- 松手回弹 ----------
 
         self.bounce_timer = QTimer(self)
@@ -7234,6 +7242,75 @@ class DesktopPet(QLabel):
         self.blink_close_timer.stop()
         self.sleep_wait_timer.stop()
 
+    def finish_active_drag(
+        self,
+        suppress_late_release=False,
+    ):
+        """统一结束当前拖动，避免不同出口留下 dragging 状态。"""
+
+        if not self.is_dragging:
+            return False
+
+        self.drag_release_watchdog.stop()
+
+        try:
+            self.releaseMouse()
+        except RuntimeError:
+            pass
+
+        self.single_click_timer.stop()
+
+        drag_mode = self.drag_mode
+
+        if drag_mode == "pickup":
+            self.stop_drag_animation()
+
+            if not self.play_trigger_action(
+                "drag_release"
+            ):
+                self.start_release_bounce()
+
+        else:
+            self.finish_preserved_drag()
+
+        self.drag_position = None
+        self.press_position = None
+        self.drag_last_window_position = None
+        self.is_dragging = False
+        self.drag_mode = None
+        self.click_woke_from_sleep = False
+
+        # watchdog 可能比一个迟到的 mouseReleaseEvent 先结束拖动。
+        # 那个迟到的 release 绝不能再被解释成一次普通“戳”。
+        self.ignore_next_left_release = bool(
+            suppress_late_release
+        )
+
+        self.try_apply_pending_online_update()
+        return True
+
+    def check_drag_release_watchdog(self):
+        """鼠标已实际松开但 Qt 漏掉 release 时，自动收尾。"""
+
+        if not self.is_dragging:
+            self.drag_release_watchdog.stop()
+            return
+
+        if (
+            QApplication.mouseButtons()
+            & Qt.MouseButton.LeftButton
+        ):
+            return
+
+        debug_log(
+            "drag watchdog detected lost release "
+            f"state={self.state} mode={self.drag_mode}"
+        )
+
+        self.finish_active_drag(
+            suppress_late_release=True
+        )
+
     def mousePressEvent(self, event):
         if (
             event.button()
@@ -7307,6 +7384,15 @@ class DesktopPet(QLabel):
                     )
                     self.begin_preserved_drag()
 
+                # 明确抓住鼠标，鼠标移出果子窗口后也继续接收 release；
+                # watchdog 再作为 Windows/Qt 偶发漏事件的第二层保护。
+                try:
+                    self.grabMouse()
+                except RuntimeError:
+                    pass
+
+                self.drag_release_watchdog.start()
+
             if self.is_dragging:
                 target = (
                     current - self.drag_position
@@ -7349,23 +7435,16 @@ class DesktopPet(QLabel):
             )
 
             if self.is_dragging:
-                self.single_click_timer.stop()
                 self.ignore_next_left_release = False
-
-                if self.drag_mode == "pickup":
-                    self.stop_drag_animation()
-
-                    if not self.play_trigger_action(
-                        "drag_release"
-                    ):
-                        self.start_release_bounce()
-
-                else:
-                    self.finish_preserved_drag()
+                self.finish_active_drag()
 
             else:
-                # 没有拖动：这时才把鼠标操作解释为“点击”。
-                if self.state == "sleeping":
+                # watchdog 已经替这个 release 收过尾时，
+                # 这个迟到事件只负责被吃掉，不能变成一次点击。
+                if self.ignore_next_left_release:
+                    self.ignore_next_left_release = False
+
+                elif self.state == "sleeping":
                     # 睡着时这一整个点击只负责叫醒。
                     self.click_woke_from_sleep = True
                     self.wake_up()
@@ -7376,30 +7455,24 @@ class DesktopPet(QLabel):
                     debug_log(
                         "click ignored during wake"
                     )
-                    pass
 
                 elif self.poke_input_locked:
                     # 特殊连戳动画/冷却期间只禁止“戳”，
-                    # 拖动已经在上面的分支始终允许。
+                    # 拖动仍然允许。
                     pass
-
-                elif self.ignore_next_left_release:
-                    self.ignore_next_left_release = False
 
                 else:
                     self.handle_single_click()
 
-            self.drag_position = None
-            self.press_position = None
-            self.drag_last_window_position = None
-            self.is_dragging = False
-            self.drag_mode = None
-            self.click_woke_from_sleep = False
+                self.drag_position = None
+                self.press_position = None
+                self.drag_last_window_position = None
+                self.click_woke_from_sleep = False
 
-            # 网络如果已经下载完成，现在再尝试安全应用。
-            self.try_apply_pending_online_update()
+                self.try_apply_pending_online_update()
 
             event.accept()
+
 
     def mouseDoubleClickEvent(self, event):
         if (
@@ -7573,6 +7646,13 @@ class DesktopPet(QLabel):
         self.random_action_timer.stop()
         self.poke_cooldown_timer.stop()
         self.poke_inactivity_timer.stop()
+        self.drag_release_watchdog.stop()
+
+        try:
+            self.releaseMouse()
+        except RuntimeError:
+            pass
+
         self.audio_keepalive_timer.stop()
         self.stop_action_sound()
         self.global_mouse_timer.stop()
@@ -7591,6 +7671,13 @@ class DesktopPet(QLabel):
         self.random_action_timer.stop()
         self.pending_update_timer.stop()
         self.poke_inactivity_timer.stop()
+        self.drag_release_watchdog.stop()
+
+        try:
+            self.releaseMouse()
+        except RuntimeError:
+            pass
+
         self.audio_keepalive_timer.stop()
         self.stop_action_sound()
         self.global_mouse_timer.stop()

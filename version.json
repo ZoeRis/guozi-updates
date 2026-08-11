@@ -1,6 +1,6 @@
 {
-  "version": "3.9-one-warning-then-run",
-  "app_version": 20,
+  "version": "4.0-drag-release-guard",
+  "app_version": 21,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -26,7 +26,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "a1c65df084f9cae7303570dd409ad48ab6f3b04f51e8455f355edc36662d4e73",
+  "app_sha256": "ddef6c8b8b750be0bf3e24bcbf1caa9a08954132ba90ec98ae476e880233adae",
   "launcher_version": 17,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "44301137af031d4144a504f757a2134c756f22bdd052cf271316f4f58b111b84"
