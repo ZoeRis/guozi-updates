@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 30
+APP_BUILD_VERSION = 31
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -1862,6 +1862,23 @@ class DesktopPet(QLabel):
         ) as response:
             return response.read().decode("utf-8-sig")
 
+    def cache_busted_urls(self, urls):
+        """给在线资源 URL 加唯一参数，避免拿到旧缓存。"""
+
+        stamp = int(time.time() * 1000)
+        nonce = random.randint(1000, 999999)
+
+        result = []
+
+        for index, url in enumerate(urls):
+            separator = "&" if "?" in url else "?"
+            result.append(
+                f"{url}{separator}guozi_cb="
+                f"{stamp}_{nonce}_{index}"
+            )
+
+        return tuple(result)
+
     def download_text_from_sources(
         self,
         urls,
@@ -1998,9 +2015,11 @@ class DesktopPet(QLabel):
         ):
             raise ValueError("更新文件路径不安全。")
 
-        return (
-            RAW_REPO_BASE_URL + relative_path,
-            CDN_REPO_BASE_URL + relative_path,
+        return self.cache_busted_urls(
+            (
+                RAW_REPO_BASE_URL + relative_path,
+                CDN_REPO_BASE_URL + relative_path,
+            )
         )
 
     def core_image_filenames_from_version(
@@ -2581,7 +2600,9 @@ class DesktopPet(QLabel):
 
             version_text, preferred_source = (
                 self.download_text_from_sources(
-                    UPDATE_INFO_URLS
+                    self.cache_busted_urls(
+                        UPDATE_INFO_URLS
+                    )
                 )
             )
 
@@ -2672,13 +2693,15 @@ class DesktopPet(QLabel):
                     filename,
                     safe="",
                 )
-                image_urls = (
-                    RAW_REPO_BASE_URL
-                    + "images/"
-                    + encoded_name,
-                    CDN_REPO_BASE_URL
-                    + "images/"
-                    + encoded_name,
+                image_urls = self.cache_busted_urls(
+                    (
+                        RAW_REPO_BASE_URL
+                        + "images/"
+                        + encoded_name,
+                        CDN_REPO_BASE_URL
+                        + "images/"
+                        + encoded_name,
+                    )
                 )
 
                 data, source_index = (
@@ -2700,13 +2723,15 @@ class DesktopPet(QLabel):
                     filename,
                     safe="",
                 )
-                sound_urls = (
-                    RAW_REPO_BASE_URL
-                    + "sounds/"
-                    + encoded_name,
-                    CDN_REPO_BASE_URL
-                    + "sounds/"
-                    + encoded_name,
+                sound_urls = self.cache_busted_urls(
+                    (
+                        RAW_REPO_BASE_URL
+                        + "sounds/"
+                        + encoded_name,
+                        CDN_REPO_BASE_URL
+                        + "sounds/"
+                        + encoded_name,
+                    )
                 )
 
                 data, source_index = (
