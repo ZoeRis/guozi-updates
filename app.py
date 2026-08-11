@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 35
+APP_BUILD_VERSION = 36
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -194,8 +194,8 @@ def keep_widget_topmost(widget):
 
 WALK_FRAME_INTERVAL_MS = 160
 RUN_FRAME_INTERVAL_MS = 90
-RUN_SPEED_MULTIPLIER = 8.0
-MIN_RUN_STEP = 16.0
+RUN_SPEED_MULTIPLIER = 4.0
+MIN_RUN_STEP = 8.0
 
 ONLINE_DOWNLOAD_ROUNDS = 3
 ONLINE_RETRY_DELAYS = (0.0, 0.45, 1.10)
@@ -7835,13 +7835,40 @@ class DesktopPet(QLabel):
 
         self.wake_input_locked = False
 
-        # 没有线上醒来动作时，保留原来的反应。
-        self.state = "happy"
-        self.setPixmap(self.happy)
-        self.say("耶嘿！")
-        self.happy_timer.start(2000)
+        # 线上 wake 动作若暂时缺失，也使用专门的醒来表现，
+        # 不再回退成 happy / “耶嘿！”。
+        self.state = "normal"
+        self.setPixmap(self.wake)
+        self.say(
+            random.choice(
+                [
+                    "睡醒啦！",
+                    "果子醒来啦。",
+                    "又精神了耶！",
+                ]
+            )
+        )
 
+        QTimer.singleShot(
+            1500,
+            self.finish_fallback_wake,
+        )
+
+        self.update_menu_text()
+
+    def finish_fallback_wake(self):
+        """线上 wake 动作缺失时的本地醒来动画收尾。"""
+
+        if self.state == "sleeping":
+            return
+
+        self.wake_input_locked = False
+        self.state = "normal"
+        self.setPixmap(self.normal)
+        self.schedule_blink()
+        self.schedule_walk()
         self.schedule_auto_speech()
+        self.schedule_random_action()
         self.schedule_sleep()
         self.update_menu_text()
 
