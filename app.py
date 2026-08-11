@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 33
+APP_BUILD_VERSION = 34
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -199,6 +199,16 @@ MIN_RUN_STEP = 16.0
 
 ONLINE_DOWNLOAD_ROUNDS = 3
 ONLINE_RETRY_DELAYS = (0.0, 0.45, 1.10)
+
+# ---------- 拖拽惯性 ----------
+# 只有快速拖动并立即松手时才会滑动；慢慢放下仍原地落地。
+DRAG_INERTIA_SAMPLE_WINDOW = 0.12
+DRAG_INERTIA_MIN_SPEED = 500.0
+DRAG_INERTIA_TRANSFER = 0.55
+DRAG_INERTIA_MAX_SPEED = 2400.0
+DRAG_INERTIA_STOP_SPEED = 70.0
+DRAG_INERTIA_FRICTION_16MS = 0.80
+DRAG_INERTIA_TIMER_MS = 16
 
 
 DEFAULT_SETTINGS = {
@@ -554,6 +564,14 @@ class DesktopPet(QLabel):
         self.ignore_next_left_release = False
         self.click_woke_from_sleep = False
 
+        # 拖拽速度采样 / 松手惯性
+        self.drag_motion_samples = []
+        self.inertia_velocity_x = 0.0
+        self.inertia_velocity_y = 0.0
+        self.inertia_float_x = 0.0
+        self.inertia_float_y = 0.0
+        self.inertia_last_tick = None
+
         # drag1.PNG / drag2.PNG 的固定抓取点。
         # 原图约为 (527, 56) / 1000×1000。
         self.drag_grab_ratio_x = 0.527
@@ -772,6 +790,16 @@ class DesktopPet(QLabel):
         self.drag_release_watchdog.setInterval(40)
         self.drag_release_watchdog.timeout.connect(
             self.check_drag_release_watchdog
+        )
+
+        # ---------- 拖拽松手惯性 ----------
+
+        self.drag_inertia_timer = QTimer(self)
+        self.drag_inertia_timer.setInterval(
+            DRAG_INERTIA_TIMER_MS
+        )
+        self.drag_inertia_timer.timeout.connect(
+            self.update_drag_inertia
         )
 
         # ---------- 松手回弹 ----------
@@ -7361,6 +7389,7 @@ class DesktopPet(QLabel):
         """普通待机拖动：使用“提起来”动画。"""
 
         self.drag_mode = "pickup"
+        self.reset_drag_motion_samples()
 
         debug_log(
             f"start_drag_animation previous_state={self.state}"
@@ -7395,6 +7424,7 @@ class DesktopPet(QLabel):
             target.x(),
             target.y(),
         )
+        self.record_drag_motion_sample()
 
         self.drag_animation_timer.start()
 
@@ -7896,6 +7926,7 @@ class DesktopPet(QLabel):
             "normal",
             "walking",
             "bouncing",
+            "inertial",
         ):
             return True
 
@@ -7926,11 +7957,286 @@ class DesktopPet(QLabel):
         if self.state == "bouncing":
             self.cancel_release_bounce()
 
+        if self.state == "inertial":
+            self.cancel_drag_inertia(
+                trigger_landing=False
+            )
+
         self.cancel_release_bounce()
         self.stop_walk_timers()
         self.blink_wait_timer.stop()
         self.blink_close_timer.stop()
         self.sleep_wait_timer.stop()
+
+    def reset_drag_motion_samples(self):
+        """清空本次拖动的速度采样。"""
+
+        self.drag_motion_samples = []
+
+    def record_drag_motion_sample(self):
+        """记录拖动窗口的实际位置，用于估算松手速度。"""
+
+        now = time.monotonic()
+
+        self.drag_motion_samples.append(
+            (
+                now,
+                float(self.x()),
+                float(self.y()),
+            )
+        )
+
+        cutoff = (
+            now
+            - DRAG_INERTIA_SAMPLE_WINDOW
+            - 0.08
+        )
+
+        self.drag_motion_samples = [
+            sample
+            for sample in self.drag_motion_samples
+            if sample[0] >= cutoff
+        ][-12:]
+
+    def calculate_drag_release_velocity(self):
+        """根据松手前约 120ms 的真实移动估算速度。"""
+
+        samples = self.drag_motion_samples
+
+        if len(samples) < 2:
+            return 0.0, 0.0
+
+        now = time.monotonic()
+        latest = samples[-1]
+
+        # 鼠标已经停住一小会儿再松手时，不继承之前的速度。
+        if (
+            now - latest[0]
+            > DRAG_INERTIA_SAMPLE_WINDOW
+        ):
+            return 0.0, 0.0
+
+        cutoff = (
+            latest[0]
+            - DRAG_INERTIA_SAMPLE_WINDOW
+        )
+
+        recent = [
+            sample
+            for sample in samples
+            if sample[0] >= cutoff
+        ]
+
+        if len(recent) < 2:
+            return 0.0, 0.0
+
+        first = recent[0]
+        last = recent[-1]
+        dt = last[0] - first[0]
+
+        if dt < 0.018:
+            return 0.0, 0.0
+
+        raw_vx = (
+            last[1] - first[1]
+        ) / dt
+        raw_vy = (
+            last[2] - first[2]
+        ) / dt
+
+        raw_speed = math.hypot(
+            raw_vx,
+            raw_vy,
+        )
+
+        if raw_speed < DRAG_INERTIA_MIN_SPEED:
+            return 0.0, 0.0
+
+        vx = raw_vx * DRAG_INERTIA_TRANSFER
+        vy = raw_vy * DRAG_INERTIA_TRANSFER
+
+        speed = math.hypot(vx, vy)
+
+        if speed > DRAG_INERTIA_MAX_SPEED:
+            scale = (
+                DRAG_INERTIA_MAX_SPEED
+                / speed
+            )
+            vx *= scale
+            vy *= scale
+
+        debug_log(
+            "drag release velocity "
+            f"raw={raw_speed:.1f}px/s "
+            f"inertia=({vx:.1f},{vy:.1f})"
+        )
+
+        return vx, vy
+
+    def start_drag_inertia(self, vx, vy):
+        """松手后按拖动速度继续滑行一小段。"""
+
+        speed = math.hypot(vx, vy)
+
+        if speed < DRAG_INERTIA_STOP_SPEED:
+            return False
+
+        self.drag_inertia_timer.stop()
+
+        self.inertia_velocity_x = float(vx)
+        self.inertia_velocity_y = float(vy)
+        self.inertia_float_x = float(self.x())
+        self.inertia_float_y = float(self.y())
+        self.inertia_last_tick = time.monotonic()
+
+        self.state = "inertial"
+        self.setPixmap(self.normal)
+
+        debug_log(
+            "drag inertia start "
+            f"speed={speed:.1f}px/s"
+        )
+
+        self.drag_inertia_timer.start()
+        return True
+
+    def update_drag_inertia(self):
+        """惯性滑动：速度持续衰减，撞到屏幕边缘则该方向停止。"""
+
+        if self.state != "inertial":
+            self.drag_inertia_timer.stop()
+            return
+
+        now = time.monotonic()
+
+        if self.inertia_last_tick is None:
+            self.inertia_last_tick = now
+            return
+
+        dt = max(
+            0.005,
+            min(
+                0.05,
+                now - self.inertia_last_tick,
+            ),
+        )
+        self.inertia_last_tick = now
+
+        self.inertia_float_x += (
+            self.inertia_velocity_x * dt
+        )
+        self.inertia_float_y += (
+            self.inertia_velocity_y * dt
+        )
+
+        requested_x = round(
+            self.inertia_float_x
+        )
+        requested_y = round(
+            self.inertia_float_y
+        )
+
+        safe_x, safe_y = self.safe_coordinates(
+            requested_x,
+            requested_y,
+        )
+
+        self.move(
+            safe_x,
+            safe_y,
+        )
+
+        if safe_x != requested_x:
+            self.inertia_velocity_x = 0.0
+            self.inertia_float_x = float(safe_x)
+        else:
+            self.inertia_float_x = float(
+                safe_x
+            )
+
+        if safe_y != requested_y:
+            self.inertia_velocity_y = 0.0
+            self.inertia_float_y = float(safe_y)
+        else:
+            self.inertia_float_y = float(
+                safe_y
+            )
+
+        decay = (
+            DRAG_INERTIA_FRICTION_16MS
+            ** (
+                dt
+                / (
+                    DRAG_INERTIA_TIMER_MS
+                    / 1000.0
+                )
+            )
+        )
+
+        self.inertia_velocity_x *= decay
+        self.inertia_velocity_y *= decay
+
+        speed = math.hypot(
+            self.inertia_velocity_x,
+            self.inertia_velocity_y,
+        )
+
+        if speed <= DRAG_INERTIA_STOP_SPEED:
+            self.finish_drag_inertia()
+
+    def finish_drag_inertia(self):
+        """惯性停下后，在最终位置执行原本的落地动作。"""
+
+        if self.state != "inertial":
+            return
+
+        self.drag_inertia_timer.stop()
+        self.inertia_velocity_x = 0.0
+        self.inertia_velocity_y = 0.0
+        self.inertia_last_tick = None
+
+        self.state = "normal"
+        self.setPixmap(self.normal)
+
+        debug_log(
+            "drag inertia finish "
+            f"position=({self.x()},{self.y()})"
+        )
+
+        if not self.play_trigger_action(
+            "drag_release"
+        ):
+            self.start_release_bounce()
+
+        self.try_apply_pending_online_update()
+
+    def cancel_drag_inertia(
+        self,
+        trigger_landing=False,
+    ):
+        """取消当前惯性；重新抓住时不强制播放落地。"""
+
+        was_active = (
+            self.state == "inertial"
+            or self.drag_inertia_timer.isActive()
+        )
+
+        self.drag_inertia_timer.stop()
+        self.inertia_velocity_x = 0.0
+        self.inertia_velocity_y = 0.0
+        self.inertia_last_tick = None
+
+        if self.state == "inertial":
+            self.state = "normal"
+            self.setPixmap(self.normal)
+
+        if was_active and trigger_landing:
+            if not self.play_trigger_action(
+                "drag_release"
+            ):
+                self.start_release_bounce()
+
+        return was_active
 
     def finish_active_drag(
         self,
@@ -7952,13 +8258,27 @@ class DesktopPet(QLabel):
 
         drag_mode = self.drag_mode
 
+        inertia_started = False
+
         if drag_mode == "pickup":
+            vx, vy = (
+                self.calculate_drag_release_velocity()
+            )
+
             self.stop_drag_animation()
 
-            if not self.play_trigger_action(
-                "drag_release"
-            ):
-                self.start_release_bounce()
+            inertia_started = (
+                self.start_drag_inertia(
+                    vx,
+                    vy,
+                )
+            )
+
+            if not inertia_started:
+                if not self.play_trigger_action(
+                    "drag_release"
+                ):
+                    self.start_release_bounce()
 
         else:
             self.finish_preserved_drag()
@@ -7966,6 +8286,7 @@ class DesktopPet(QLabel):
         self.drag_position = None
         self.press_position = None
         self.drag_last_window_position = None
+        self.reset_drag_motion_samples()
         self.is_dragging = False
         self.drag_mode = None
         self.click_woke_from_sleep = False
@@ -8021,6 +8342,7 @@ class DesktopPet(QLabel):
             )
             self.is_dragging = False
             self.drag_mode = None
+            self.reset_drag_motion_samples()
             self.click_woke_from_sleep = False
 
             debug_log(
@@ -8097,6 +8419,9 @@ class DesktopPet(QLabel):
                     target.x(),
                     target.y(),
                 )
+
+                if self.drag_mode == "pickup":
+                    self.record_drag_motion_sample()
 
                 if self.drag_mode == "preserve":
                     new_position = QPoint(
@@ -8337,6 +8662,7 @@ class DesktopPet(QLabel):
         self.poke_cooldown_timer.stop()
         self.poke_inactivity_timer.stop()
         self.drag_release_watchdog.stop()
+        self.drag_inertia_timer.stop()
 
         try:
             self.releaseMouse()

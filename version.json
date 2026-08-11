@@ -1,6 +1,6 @@
 {
-  "version": "5.2-double-run-speed",
-  "app_version": 33,
+  "version": "5.3-drag-inertia",
+  "app_version": 34,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -30,7 +30,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "f84540ace162af154ae5ee2c392bb7a028f49c225e1c4b7051cfa880ec9be8ae",
+  "app_sha256": "88bbb15d400f3363595b7b356069d8172930e0057b4f4f74b6d53736cf369d8c",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"
