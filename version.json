@@ -1,6 +1,6 @@
 {
-  "version": "3.4-sleep-resets-pokes",
-  "app_version": 15,
+  "version": "3.5-audio-keepalive",
+  "app_version": 16,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",

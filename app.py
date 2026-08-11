@@ -1,4 +1,5 @@
 import ctypes
+import io
 from ctypes import wintypes
 import json
 import math
@@ -481,6 +482,12 @@ class DesktopPet(QLabel):
         self.sound_effects = {}
         self.sound_cache_generation = 0
 
+        # Windows 原生音效的“保温”数据：
+        # 定期播放极短的全静音 WAV，减少长时间空闲后
+        # 第一次 poke.wav 唤醒音频设备产生的延迟。
+        self.audio_keepalive_wav = None
+        self.audio_keepalive_running = False
+
         self.custom_action_frames = []
         self.custom_action_frame_index = 0
         self.custom_action_frames_left = 0
@@ -673,6 +680,24 @@ class DesktopPet(QLabel):
         self.pending_update_timer.timeout.connect(
             self.try_apply_pending_online_update
         )
+
+        # ---------- Windows 音频保温 ----------
+
+        self.audio_keepalive_timer = QTimer(self)
+        self.audio_keepalive_timer.setInterval(7000)
+        self.audio_keepalive_timer.timeout.connect(
+            self.keep_windows_audio_awake
+        )
+
+        if (
+            sys.platform == "win32"
+            and winsound is not None
+        ):
+            self.audio_keepalive_timer.start()
+            QTimer.singleShot(
+                350,
+                self.keep_windows_audio_awake,
+            )
 
         # ---------- 散步 ----------
 
@@ -3896,6 +3921,61 @@ class DesktopPet(QLabel):
                 ),
             )
 
+    def build_audio_keepalive_wav(self):
+        """生成约 30 ms 的全静音 PCM WAV。"""
+
+        buffer = io.BytesIO()
+
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(8000)
+            wav_file.writeframes(
+                b"\x00\x00" * 240
+            )
+
+        return buffer.getvalue()
+
+    def keep_windows_audio_awake(self):
+        """用后台线程播放极短静音，避免音频设备长时间空闲。"""
+
+        if (
+            sys.platform != "win32"
+            or winsound is None
+            or self.audio_keepalive_running
+        ):
+            return
+
+        if self.audio_keepalive_wav is None:
+            self.audio_keepalive_wav = (
+                self.build_audio_keepalive_wav()
+            )
+
+        self.audio_keepalive_running = True
+
+        def worker():
+            try:
+                winsound.PlaySound(
+                    self.audio_keepalive_wav,
+                    winsound.SND_MEMORY
+                    | winsound.SND_NODEFAULT
+                    | winsound.SND_NOSTOP,
+                )
+                debug_log(
+                    "winsound keepalive pulse"
+                )
+            except (RuntimeError, OSError):
+                debug_log(
+                    "winsound keepalive failed"
+                )
+            finally:
+                self.audio_keepalive_running = False
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+        ).start()
+
     def preload_action_sounds(self):
         """预先准备动作音效。"""
 
@@ -3907,8 +3987,15 @@ class DesktopPet(QLabel):
             and winsound is not None
         ):
             self.release_action_sound_cache()
+
+            if self.audio_keepalive_wav is None:
+                self.audio_keepalive_wav = (
+                    self.build_audio_keepalive_wav()
+                )
+
             debug_log(
-                "audio backend=windows winsound"
+                "audio backend=windows winsound "
+                "with keepalive"
             )
             return
 
@@ -6740,6 +6827,7 @@ class DesktopPet(QLabel):
         self.custom_action_timer.stop()
         self.random_action_timer.stop()
         self.poke_cooldown_timer.stop()
+        self.audio_keepalive_timer.stop()
         self.stop_action_sound()
         self.global_mouse_timer.stop()
         self.topmost_timer.stop()
@@ -6756,6 +6844,7 @@ class DesktopPet(QLabel):
         self.custom_action_timer.stop()
         self.random_action_timer.stop()
         self.pending_update_timer.stop()
+        self.audio_keepalive_timer.stop()
         self.stop_action_sound()
         self.global_mouse_timer.stop()
         self.topmost_timer.stop()
