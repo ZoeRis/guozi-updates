@@ -508,6 +508,7 @@ class DesktopPet(QLabel):
         self.poke_group_count = 0
         self.poke_warning_count = 0
         self.poke_input_locked = False
+        self.wake_input_locked = False
         self.poke_cycle_reset_pending = False
 
         self.active_custom_action_trigger = None
@@ -4886,6 +4887,12 @@ class DesktopPet(QLabel):
             if not self.walking_paused:
                 self.schedule_walk()
 
+        if finished_trigger == "wake":
+            self.wake_input_locked = False
+            debug_log(
+                "wake input unlocked"
+            )
+
         if (
             finished_trigger in (
                 "triple_click",
@@ -6032,6 +6039,10 @@ class DesktopPet(QLabel):
         if self.state == "sleeping":
             return
 
+        # 每次真正进入睡眠，都把整套戳击轮次清零。
+        # 醒来后重新从第一下戳开始计算。
+        self.reset_poke_cycle()
+
         self.stop_walk_timers()
         self.blink_wait_timer.stop()
         self.blink_close_timer.stop()
@@ -6087,9 +6098,15 @@ class DesktopPet(QLabel):
         self.state = "normal"
         self.setPixmap(self.normal)
 
+        # wake 动画期间只禁止“戳”，拖动仍然允许，
+        # 并继续保持 wake 动画本身。
+        self.wake_input_locked = True
+
         if self.play_trigger_action("wake"):
             self.update_menu_text()
             return
+
+        self.wake_input_locked = False
 
         # 没有线上醒来动作时，保留原来的反应。
         self.state = "happy"
@@ -6521,6 +6538,14 @@ class DesktopPet(QLabel):
                     self.click_woke_from_sleep = True
                     self.wake_up()
 
+                elif self.wake_input_locked:
+                    # 醒来动画期间继续点击不触发 poke，
+                    # 也不累计连戳次数。
+                    debug_log(
+                        "click ignored during wake"
+                    )
+                    pass
+
                 elif self.poke_input_locked:
                     # 特殊连戳动画/冷却期间只禁止“戳”，
                     # 拖动已经在上面的分支始终允许。
@@ -6550,8 +6575,11 @@ class DesktopPet(QLabel):
             == Qt.MouseButton.LeftButton
         ):
             # 果子本体双击没有专属动作。
-            # poke lock 仍只影响“戳”，不影响拖动。
-            if self.poke_input_locked:
+            # wake / poke 锁只影响“戳”，不影响真正拖动。
+            if (
+                self.wake_input_locked
+                or self.poke_input_locked
+            ):
                 self.single_click_timer.stop()
                 self.ignore_next_left_release = False
                 event.accept()
@@ -6704,6 +6732,7 @@ class DesktopPet(QLabel):
     # ---------- 退出 ----------
 
     def quit_pet(self):
+        self.wake_input_locked = False
         self.save_position()
         self.speech_bubble.hide()
         self.drag_animation_timer.stop()
