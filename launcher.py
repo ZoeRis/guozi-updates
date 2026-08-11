@@ -27,11 +27,13 @@ VERSION_URLS = (
 MAX_VERSION_BYTES = 256 * 1024
 MAX_APP_BYTES = 2 * 1024 * 1024
 NETWORK_TIMEOUT = 6
+NETWORK_DOWNLOAD_ROUNDS = 3
+NETWORK_RETRY_DELAYS = (0.0, 0.55, 1.20)
 
 # 未来如果 app.py 需要新的启动器能力，
 # 先在线更新 launcher.py，再提高 manifest 里的 app_api。
 SUPPORTED_APP_API = 1
-LAUNCHER_BUILD_VERSION = 25
+LAUNCHER_BUILD_VERSION = 32
 
 
 def base_dir():
@@ -115,16 +117,39 @@ def download_bytes(url, max_bytes):
 def download_from_sources(urls, max_bytes):
     last_error = None
 
-    for url in urls:
-        try:
-            return download_bytes(url, max_bytes)
-        except (
-            OSError,
-            ValueError,
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-        ) as error:
-            last_error = error
+    for round_index in range(
+        NETWORK_DOWNLOAD_ROUNDS
+    ):
+        delay = NETWORK_RETRY_DELAYS[
+            min(
+                round_index,
+                len(NETWORK_RETRY_DELAYS) - 1,
+            )
+        ]
+
+        if delay > 0:
+            time.sleep(delay)
+
+        ordered_urls = list(
+            cache_busted_urls(urls)
+        )
+
+        if round_index % 2 == 1:
+            ordered_urls.reverse()
+
+        for url in ordered_urls:
+            try:
+                return download_bytes(
+                    url,
+                    max_bytes,
+                )
+            except (
+                OSError,
+                ValueError,
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+            ) as error:
+                last_error = error
 
     if last_error is not None:
         raise last_error
@@ -140,7 +165,7 @@ def download_verified_from_sources(
     expected_sha256,
     validator=None,
 ):
-    """逐线路下载，只有 hash + 内容检查都通过才接受。"""
+    """多轮逐线路下载，只有 hash + 内容检查都通过才接受。"""
 
     last_error = None
     expected = expected_sha256.lower().strip()
@@ -148,29 +173,52 @@ def download_verified_from_sources(
     if len(expected) != 64:
         raise ValueError("SHA256 格式错误。")
 
-    for url in urls:
-        try:
-            data = download_bytes(url, max_bytes)
+    for round_index in range(
+        NETWORK_DOWNLOAD_ROUNDS
+    ):
+        delay = NETWORK_RETRY_DELAYS[
+            min(
+                round_index,
+                len(NETWORK_RETRY_DELAYS) - 1,
+            )
+        ]
 
-            actual = sha256_bytes(data)
+        if delay > 0:
+            time.sleep(delay)
 
-            if actual != expected:
-                raise ValueError(
-                    "下载文件 SHA256 不匹配。"
+        ordered_urls = list(
+            cache_busted_urls(urls)
+        )
+
+        if round_index % 2 == 1:
+            ordered_urls.reverse()
+
+        for url in ordered_urls:
+            try:
+                data = download_bytes(
+                    url,
+                    max_bytes,
                 )
 
-            if validator is not None:
-                validator(data)
+                actual = sha256_bytes(data)
 
-            return data
+                if actual != expected:
+                    raise ValueError(
+                        "下载文件 SHA256 不匹配。"
+                    )
 
-        except (
-            OSError,
-            ValueError,
-            urllib.error.URLError,
-            urllib.error.HTTPError,
-        ) as error:
-            last_error = error
+                if validator is not None:
+                    validator(data)
+
+                return data
+
+            except (
+                OSError,
+                ValueError,
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+            ) as error:
+                last_error = error
 
     if last_error is not None:
         raise last_error

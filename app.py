@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 31
+APP_BUILD_VERSION = 32
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -196,6 +196,9 @@ WALK_FRAME_INTERVAL_MS = 160
 RUN_FRAME_INTERVAL_MS = 90
 RUN_SPEED_MULTIPLIER = 4.0
 MIN_RUN_STEP = 8.0
+
+ONLINE_DOWNLOAD_ROUNDS = 3
+ONLINE_RETRY_DELAYS = (0.0, 0.45, 1.10)
 
 
 DEFAULT_SETTINGS = {
@@ -1884,28 +1887,70 @@ class DesktopPet(QLabel):
         urls,
         preferred_source=0,
     ):
-        """依次尝试主线路和备用线路。"""
-
-        ordered_sources = list(enumerate(urls))
-
-        if preferred_source == 1:
-            ordered_sources.reverse()
+        """主/备用线路自动重试多轮；用于文本资源。"""
 
         last_error = None
 
-        for source_index, url in ordered_sources:
-            try:
-                return (
-                    self.download_text(url),
-                    source_index,
+        for round_index in range(
+            ONLINE_DOWNLOAD_ROUNDS
+        ):
+            delay = ONLINE_RETRY_DELAYS[
+                min(
+                    round_index,
+                    len(ONLINE_RETRY_DELAYS) - 1,
                 )
-            except (
-                OSError,
-                UnicodeDecodeError,
-                urllib.error.URLError,
-                urllib.error.HTTPError,
-            ) as error:
-                last_error = error
+            ]
+
+            if delay > 0:
+                time.sleep(delay)
+
+            ordered_sources = list(
+                enumerate(
+                    self.cache_busted_urls(urls)
+                )
+            )
+
+            # 第 1 轮尊重上一份成功线路；
+            # 后续轮次交替优先顺序，避免一直撞同一条线路。
+            prefer_backup = (
+                preferred_source == 1
+            )
+
+            if round_index % 2 == 1:
+                prefer_backup = not prefer_backup
+
+            if prefer_backup:
+                ordered_sources.reverse()
+
+            for source_index, url in ordered_sources:
+                try:
+                    result = self.download_text(url)
+
+                    if round_index > 0:
+                        debug_log(
+                            "text download recovered "
+                            f"round={round_index + 1} "
+                            f"source={source_index}"
+                        )
+
+                    return (
+                        result,
+                        source_index,
+                    )
+
+                except (
+                    OSError,
+                    UnicodeDecodeError,
+                    urllib.error.URLError,
+                    urllib.error.HTTPError,
+                ) as error:
+                    last_error = error
+                    debug_log(
+                        "text download attempt failed "
+                        f"round={round_index + 1} "
+                        f"source={source_index} "
+                        f"error={repr(error)}"
+                    )
 
         if last_error is not None:
             raise last_error
@@ -1963,28 +2008,68 @@ class DesktopPet(QLabel):
         urls,
         preferred_source=0,
     ):
-        """依次尝试不同线路下载图片。"""
-
-        ordered_sources = list(enumerate(urls))
-
-        if preferred_source == 1:
-            ordered_sources.reverse()
+        """主/备用线路自动重试多轮；用于图片和音效。"""
 
         last_error = None
 
-        for source_index, url in ordered_sources:
-            try:
-                return (
-                    self.download_bytes(url),
-                    source_index,
+        for round_index in range(
+            ONLINE_DOWNLOAD_ROUNDS
+        ):
+            delay = ONLINE_RETRY_DELAYS[
+                min(
+                    round_index,
+                    len(ONLINE_RETRY_DELAYS) - 1,
                 )
-            except (
-                OSError,
-                ValueError,
-                urllib.error.URLError,
-                urllib.error.HTTPError,
-            ) as error:
-                last_error = error
+            ]
+
+            if delay > 0:
+                time.sleep(delay)
+
+            ordered_sources = list(
+                enumerate(
+                    self.cache_busted_urls(urls)
+                )
+            )
+
+            prefer_backup = (
+                preferred_source == 1
+            )
+
+            if round_index % 2 == 1:
+                prefer_backup = not prefer_backup
+
+            if prefer_backup:
+                ordered_sources.reverse()
+
+            for source_index, url in ordered_sources:
+                try:
+                    result = self.download_bytes(url)
+
+                    if round_index > 0:
+                        debug_log(
+                            "binary download recovered "
+                            f"round={round_index + 1} "
+                            f"source={source_index}"
+                        )
+
+                    return (
+                        result,
+                        source_index,
+                    )
+
+                except (
+                    OSError,
+                    ValueError,
+                    urllib.error.URLError,
+                    urllib.error.HTTPError,
+                ) as error:
+                    last_error = error
+                    debug_log(
+                        "binary download attempt failed "
+                        f"round={round_index + 1} "
+                        f"source={source_index} "
+                        f"error={repr(error)}"
+                    )
 
         if last_error is not None:
             raise last_error
@@ -3684,13 +3769,13 @@ class DesktopPet(QLabel):
         self.pending_online_update_package = None
         self.pending_update_timer.stop()
         self.update_in_progress = False
-        self.say("检查更新失败，请稍后再试。")
+        self.say("自动重试后仍未更新成功，请稍后再试。")
 
     def check_online_updates(self):
         """后台检查在线更新；网络等待不再卡住桌宠。"""
 
         if self.update_in_progress:
-            self.say("正在检查在线更新……")
+            self.say("正在检查在线更新……网络不稳时会自动重试。")
             return
 
         self.update_in_progress = True
@@ -3700,7 +3785,7 @@ class DesktopPet(QLabel):
             f"dragging={self.is_dragging}"
         )
 
-        self.say("正在检查在线更新……")
+        self.say("正在检查在线更新……网络不稳时会自动重试。")
 
         worker = threading.Thread(
             target=self.fetch_online_update_package,
