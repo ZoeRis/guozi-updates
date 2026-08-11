@@ -31,7 +31,7 @@ NETWORK_TIMEOUT = 6
 # 未来如果 app.py 需要新的启动器能力，
 # 先在线更新 launcher.py，再提高 manifest 里的 app_api。
 SUPPORTED_APP_API = 1
-LAUNCHER_BUILD_VERSION = 24
+LAUNCHER_BUILD_VERSION = 25
 
 
 def base_dir():
@@ -458,6 +458,10 @@ def run_app():
 
 
 def main():
+    print(
+        f"Guozi launcher build {LAUNCHER_BUILD_VERSION}"
+    )
+
     updated, previous_state = (
         check_code_update()
     )
