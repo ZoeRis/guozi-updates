@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "actions": [
     {
       "name": "开心摇摆",
@@ -109,7 +109,7 @@
       "steps": [
         {
           "type": "sound",
-          "file": "squeak.wav"
+          "file": "angry.wav"
         },
         {
           "type": "say",
@@ -135,7 +135,7 @@
       "steps": [
         {
           "type": "sound",
-          "file": "squeak.wav"
+          "file": "angry.wav"
         },
         {
           "type": "say",
