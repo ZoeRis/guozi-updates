@@ -1,6 +1,6 @@
 {
-  "version": "5.14-talk-sound",
-  "app_version": 45,
+  "version": "5.15-handdrawn-update-icons",
+  "app_version": 46,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -27,10 +27,17 @@
     "sleep1.PNG",
     "sleep2.PNG",
     "drag1.PNG",
-    "drag2.PNG"
+    "drag2.PNG",
+    "loading1.png",
+    "loading2.png",
+    "loading3.png",
+    "complete.png",
+    "success.png",
+    "fail.png",
+    "update.png"
   ],
   "app_api": 1,
-  "app_sha256": "402b2fe758ea96cad47cd32bbcf6c0fde18926f77de80a02bba98db28be357f2",
+  "app_sha256": "161cca74296dfa4af2de2248430aee1c022cb53ef23ac2a4bf30d56fed8b6026",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"

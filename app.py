@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 45
+APP_BUILD_VERSION = 46
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -492,13 +492,30 @@ class SleepZzzWidget(QWidget):
 class UpdateStatusWidget(QWidget):
     """果子旁边的小型更新状态指示器。"""
 
+    HANDDRAWN_FILES = {
+        "waiting": "complete.png",
+        "success": "success.png",
+        "failure": "fail.png",
+        "restart": "update.png",
+    }
+
+    LOADING_FILES = (
+        "loading1.png",
+        "loading2.png",
+        "loading3.png",
+    )
+
     def __init__(self):
         super().__init__()
 
         self.status = "idle"
         self.phase = 0
+        self.handdrawn_pixmaps = {}
+        self.loading_pixmaps = []
 
-        self.setFixedSize(30, 30)
+        # 手绘图标信息量比旧的线条图标多，
+        # 稍微放大一点，缩到桌面上仍然能看清。
+        self.setFixedSize(48, 48)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -513,12 +530,66 @@ class UpdateStatusWidget(QWidget):
         )
 
         self.animation_timer = QTimer(self)
-        self.animation_timer.setInterval(90)
+        self.animation_timer.setInterval(160)
         self.animation_timer.timeout.connect(
             self.advance_animation
         )
 
+        self.reload_images()
         self.hide()
+
+    def status_image_path(self, filename):
+        """线上新版优先，本地 images 作为回退。"""
+
+        online_path = ONLINE_IMAGE_DIR / filename
+
+        if online_path.exists():
+            return online_path
+
+        return IMAGE_DIR / filename
+
+    def load_status_pixmap(self, filename):
+        path = self.status_image_path(filename)
+        pixmap = QPixmap(str(path))
+
+        if pixmap.isNull():
+            debug_log(
+                f"update status image not ready: {filename}"
+            )
+            return None
+
+        return pixmap.scaled(
+            self.width(),
+            self.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def reload_images(self):
+        """重新读取手绘更新图标；在线更新后可立即换成新版。"""
+
+        self.loading_pixmaps = [
+            pixmap
+            for pixmap in (
+                self.load_status_pixmap(filename)
+                for filename in self.LOADING_FILES
+            )
+            if pixmap is not None
+        ]
+
+        self.handdrawn_pixmaps = {}
+
+        for status, filename in self.HANDDRAWN_FILES.items():
+            pixmap = self.load_status_pixmap(
+                filename
+            )
+
+            if pixmap is not None:
+                self.handdrawn_pixmaps[
+                    status
+                ] = pixmap
+
+        self.update()
 
     def set_status(self, status):
         self.status = str(status)
@@ -535,8 +606,34 @@ class UpdateStatusWidget(QWidget):
         self.update()
 
     def advance_animation(self):
-        self.phase = (self.phase + 1) % 12
+        if self.loading_pixmaps:
+            self.phase = (
+                self.phase + 1
+            ) % len(self.loading_pixmaps)
+        else:
+            self.phase = (
+                self.phase + 1
+            ) % 12
+
         self.update()
+
+    def current_handdrawn_pixmap(self):
+        if (
+            self.status
+            in (
+                "checking",
+                "applying",
+            )
+            and self.loading_pixmaps
+        ):
+            return self.loading_pixmaps[
+                self.phase
+                % len(self.loading_pixmaps)
+            ]
+
+        return self.handdrawn_pixmaps.get(
+            self.status
+        )
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -544,11 +641,35 @@ class UpdateStatusWidget(QWidget):
             QPainter.RenderHint.Antialiasing,
             True,
         )
+        painter.setRenderHint(
+            QPainter.RenderHint.SmoothPixmapTransform,
+            True,
+        )
 
-        outer = QRectF(2, 2, 26, 26)
+        handdrawn = self.current_handdrawn_pixmap()
+
+        if handdrawn is not None:
+            x = (
+                self.width()
+                - handdrawn.width()
+            ) // 2
+            y = (
+                self.height()
+                - handdrawn.height()
+            ) // 2
+            painter.drawPixmap(
+                x,
+                y,
+                handdrawn,
+            )
+            return
+
+        # 如果朋友第一次启动时手绘资源尚未下载，
+        # 暂时使用旧矢量图标；资源同步完成后会自动切换。
+        outer = QRectF(8, 8, 32, 32)
 
         painter.setPen(
-            QPen(QColor("#6b514a"), 1.6)
+            QPen(QColor("#6b514a"), 1.8)
         )
         painter.setBrush(
             QColor(255, 255, 255, 238)
@@ -559,7 +680,7 @@ class UpdateStatusWidget(QWidget):
             "checking",
             "applying",
         ):
-            pen = QPen(QColor("#6b514a"), 2.6)
+            pen = QPen(QColor("#6b514a"), 2.8)
             pen.setCapStyle(
                 Qt.PenCapStyle.RoundCap
             )
@@ -572,7 +693,7 @@ class UpdateStatusWidget(QWidget):
                 90 - self.phase * 30
             ) * 16
             painter.drawArc(
-                QRectF(7, 7, 16, 16),
+                QRectF(14, 14, 20, 20),
                 start_angle,
                 235 * 16,
             )
@@ -585,13 +706,13 @@ class UpdateStatusWidget(QWidget):
                 QColor("#6b514a")
             )
 
-            for x in (10, 15, 20):
+            for x in (19, 24, 29):
                 painter.drawEllipse(
-                    QRectF(x - 1.5, 14, 3, 3)
+                    QRectF(x - 1.5, 23, 3, 3)
                 )
 
         elif self.status == "success":
-            pen = QPen(QColor("#4f8a5b"), 2.8)
+            pen = QPen(QColor("#4f8a5b"), 3.0)
             pen.setCapStyle(
                 Qt.PenCapStyle.RoundCap
             )
@@ -599,23 +720,23 @@ class UpdateStatusWidget(QWidget):
                 Qt.PenJoinStyle.RoundJoin
             )
             painter.setPen(pen)
-            painter.drawLine(8, 15, 13, 20)
-            painter.drawLine(13, 20, 22, 10)
+            painter.drawLine(16, 24, 22, 30)
+            painter.drawLine(22, 30, 33, 17)
 
         elif self.status == "failure":
-            pen = QPen(QColor("#b85d58"), 2.8)
+            pen = QPen(QColor("#b85d58"), 3.0)
             pen.setCapStyle(
                 Qt.PenCapStyle.RoundCap
             )
             painter.setPen(pen)
-            painter.drawLine(9, 9, 21, 21)
-            painter.drawLine(21, 9, 9, 21)
+            painter.drawLine(17, 17, 31, 31)
+            painter.drawLine(31, 17, 17, 31)
 
         elif self.status == "restart":
             painter.setPen(
                 QColor("#a36d2c")
             )
-            font = QFont("Arial", 17)
+            font = QFont("Arial", 21)
             font.setBold(True)
             painter.setFont(font)
             painter.drawText(
@@ -1965,6 +2086,7 @@ class DesktopPet(QLabel):
             self.refresh_action_sound_cache()
             self.load_greetings()
             self.load_all_images()
+            self.update_status_widget.reload_images()
             self.apply_timer_settings()
         except (OSError, ValueError, FileNotFoundError):
             if announce:
