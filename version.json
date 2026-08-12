@@ -1,6 +1,6 @@
 {
-  "version": "5.16-bigger-update-icons",
-  "app_version": 47,
+  "version": "5.17-two-talk-sounds",
+  "app_version": 48,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -37,7 +37,7 @@
     "update.png"
   ],
   "app_api": 1,
-  "app_sha256": "b78e1e4ffccb820994fe3d53d472456dfd44f0a5bd5656db5a92b4cd87852198",
+  "app_sha256": "ebefe5c6f1c33bb9c9a09b602f458db099e4e74fb6b13f24e0d960905fdf5d1e",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"

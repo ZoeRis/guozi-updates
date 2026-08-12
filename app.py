@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 47
+APP_BUILD_VERSION = 48
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -2597,6 +2597,9 @@ class DesktopPet(QLabel):
         if "talk.wav" not in filenames:
             filenames.append("talk.wav")
 
+        if "talk2.wav" not in filenames:
+            filenames.append("talk2.wav")
+
         if len(filenames) > 100:
             raise ValueError("动作音效数量过多。")
 
@@ -4510,7 +4513,15 @@ class DesktopPet(QLabel):
         if self.state == "sleeping":
             return
 
-        self.play_action_sound("talk.wav")
+        # 两种说话音效 1:1 随机：
+        # 自动随机台词和右键“让果子说句话”都会走这里。
+        talk_sound = random.choice(
+            (
+                "talk.wav",
+                "talk2.wav",
+            )
+        )
+        self.play_action_sound(talk_sound)
         self.say(random.choice(self.messages))
 
     def position_speech_bubble(self):
@@ -5224,6 +5235,9 @@ class DesktopPet(QLabel):
 
         if "talk.wav" not in filenames:
             filenames.append("talk.wav")
+
+        if "talk2.wav" not in filenames:
+            filenames.append("talk2.wav")
 
         return filenames
 
