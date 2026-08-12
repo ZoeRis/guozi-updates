@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 43
+APP_BUILD_VERSION = 44
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -7145,40 +7145,134 @@ class DesktopPet(QLabel):
                 right_limit = actual_right_limit
                 bottom_limit = actual_bottom_limit
 
-            minimum_distance = max(
-                90,
-                self.settings["walk_speed"] * 35,
+            # 如果普通闲逛恰好从左右墙边开始，
+            # 必须先明显朝屏幕内部走。
+            #
+            # 旧逻辑可能随机出：
+            #   横向只离墙 14 px
+            #   纵向却移动几百 px
+            # 于是果子用 walkright / walkleft 动画，
+            # 视觉上却几乎沿墙上下平移。
+            on_left_wall = (
+                current_x
+                <= actual_left_limit + 1
+            )
+            on_right_wall = (
+                current_x
+                >= actual_right_limit - 1
             )
 
-            distance = 0.0
-
-            for _ in range(30):
-                candidate_x = random.randint(
-                    left_limit,
-                    right_limit,
-                )
-                candidate_y = random.randint(
-                    top_limit,
-                    bottom_limit,
+            if on_left_wall or on_right_wall:
+                inward_direction = (
+                    1
+                    if on_left_wall
+                    else -1
                 )
 
-                candidate_distance = math.hypot(
-                    candidate_x - current_x,
-                    candidate_y - current_y,
+                available_inward = (
+                    actual_right_limit - current_x
+                    if inward_direction == 1
+                    else current_x - actual_left_limit
                 )
 
-                if (
-                    candidate_distance
-                    >= minimum_distance
-                ):
-                    target_x = candidate_x
-                    target_y = candidate_y
-                    distance = candidate_distance
-                    break
+                if available_inward <= 0:
+                    self.schedule_walk()
+                    return
 
-            if distance <= 0:
-                self.schedule_walk()
-                return
+                leave_distance = min(
+                    available_inward,
+                    random.randint(150, 280),
+                )
+
+                target_x = round(
+                    current_x
+                    + inward_direction
+                    * leave_distance
+                )
+
+                # 离墙阶段只允许轻微上下偏移，
+                # 保证“朝右/朝左走”的动画和实际运动方向一致。
+                vertical_room_up = max(
+                    0,
+                    current_y - actual_top_limit,
+                )
+                vertical_room_down = max(
+                    0,
+                    actual_bottom_limit - current_y,
+                )
+                max_vertical_offset = min(
+                    90,
+                    max(
+                        vertical_room_up,
+                        vertical_room_down,
+                    ),
+                )
+
+                if max_vertical_offset > 0:
+                    min_offset = -min(
+                        max_vertical_offset,
+                        vertical_room_up,
+                    )
+                    max_offset = min(
+                        max_vertical_offset,
+                        vertical_room_down,
+                    )
+                    target_y = (
+                        current_y
+                        + random.randint(
+                            min_offset,
+                            max_offset,
+                        )
+                    )
+                else:
+                    target_y = current_y
+
+                distance = math.hypot(
+                    target_x - current_x,
+                    target_y - current_y,
+                )
+
+                debug_log(
+                    "full screen wall departure "
+                    f"side={'left' if on_left_wall else 'right'} "
+                    f"target=({target_x},{target_y})"
+                )
+
+            else:
+                minimum_distance = max(
+                    90,
+                    self.settings["walk_speed"] * 35,
+                )
+
+                distance = 0.0
+
+                for _ in range(30):
+                    candidate_x = random.randint(
+                        left_limit,
+                        right_limit,
+                    )
+                    candidate_y = random.randint(
+                        top_limit,
+                        bottom_limit,
+                    )
+
+                    candidate_distance = math.hypot(
+                        candidate_x - current_x,
+                        candidate_y - current_y,
+                    )
+
+                    if (
+                        candidate_distance
+                        >= minimum_distance
+                    ):
+                        target_x = candidate_x
+                        target_y = candidate_y
+                        distance = candidate_distance
+                        break
+
+                if distance <= 0:
+                    self.schedule_walk()
+                    return
 
         dx = target_x - current_x
         dy = target_y - current_y
@@ -7684,6 +7778,94 @@ class DesktopPet(QLabel):
 
     def update_full_screen_walking(self):
         """更新满屏幕游走位置。"""
+
+        area = self.current_action_screen_area()
+
+        if (
+            area is not None
+            and not self.full_screen_walk_to_edge
+            and not self.edge_crawl_active
+        ):
+            left_limit = area.left()
+            right_limit = (
+                area.right()
+                - self.width()
+                + 1
+            )
+
+            on_left_wall = (
+                self.x() <= left_limit + 1
+            )
+            on_right_wall = (
+                self.x() >= right_limit - 1
+            )
+
+            # 兜底：贴墙时普通走路若几乎只剩纵向速度，
+            # 强制改成明显离墙，避免“走路动画 + 上下滑”。
+            if (
+                (on_left_wall or on_right_wall)
+                and abs(self.walk_velocity_x)
+                < max(
+                    0.75,
+                    abs(self.walk_velocity_y) * 0.35,
+                )
+            ):
+                inward_direction = (
+                    1
+                    if on_left_wall
+                    else -1
+                )
+                available_inward = (
+                    right_limit - self.x()
+                    if inward_direction == 1
+                    else self.x() - left_limit
+                )
+
+                if available_inward > 0:
+                    speed = max(
+                        1.5,
+                        float(
+                            self.settings["walk_speed"]
+                        ),
+                    )
+                    leave_distance = min(
+                        available_inward,
+                        random.randint(150, 280),
+                    )
+
+                    self.walk_direction = (
+                        inward_direction
+                    )
+                    self.walk_target_x = round(
+                        self.x()
+                        + inward_direction
+                        * leave_distance
+                    )
+                    self.walk_target_y = self.y()
+                    self.walk_float_x = float(
+                        self.x()
+                    )
+                    self.walk_float_y = float(
+                        self.y()
+                    )
+                    self.walk_velocity_x = float(
+                        speed * inward_direction
+                    )
+                    self.walk_velocity_y = 0.0
+                    self.walk_steps_left = max(
+                        1,
+                        math.ceil(
+                            leave_distance / speed
+                        ),
+                    )
+                    self.walk_frame_index = 0
+                    self.show_current_walk_frame()
+
+                    debug_log(
+                        "full screen wall-slide guard "
+                        f"turn={'right' if inward_direction == 1 else 'left'} "
+                        f"target=({self.walk_target_x},{self.walk_target_y})"
+                    )
 
         self.walk_float_x += self.walk_velocity_x
         self.walk_float_y += self.walk_velocity_y
