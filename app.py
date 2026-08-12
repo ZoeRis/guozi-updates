@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 46
+APP_BUILD_VERSION = 47
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -176,6 +176,7 @@ def keep_widget_topmost(widget):
         return
 
     try:
+        widget.raise_()
         hwnd = int(widget.winId())
         ctypes.windll.user32.SetWindowPos(
             hwnd,
@@ -515,7 +516,7 @@ class UpdateStatusWidget(QWidget):
 
         # 手绘图标信息量比旧的线条图标多，
         # 稍微放大一点，缩到桌面上仍然能看清。
-        self.setFixedSize(48, 48)
+        self.setFixedSize(72, 72)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -666,7 +667,7 @@ class UpdateStatusWidget(QWidget):
 
         # 如果朋友第一次启动时手绘资源尚未下载，
         # 暂时使用旧矢量图标；资源同步完成后会自动切换。
-        outer = QRectF(8, 8, 32, 32)
+        outer = QRectF(12, 12, 48, 48)
 
         painter.setPen(
             QPen(QColor("#6b514a"), 1.8)
@@ -693,7 +694,7 @@ class UpdateStatusWidget(QWidget):
                 90 - self.phase * 30
             ) * 16
             painter.drawArc(
-                QRectF(14, 14, 20, 20),
+                QRectF(21, 21, 30, 30),
                 start_angle,
                 235 * 16,
             )
@@ -706,9 +707,9 @@ class UpdateStatusWidget(QWidget):
                 QColor("#6b514a")
             )
 
-            for x in (19, 24, 29):
+            for x in (29, 36, 43):
                 painter.drawEllipse(
-                    QRectF(x - 1.5, 23, 3, 3)
+                    QRectF(x - 2, 34, 4, 4)
                 )
 
         elif self.status == "success":
@@ -720,8 +721,8 @@ class UpdateStatusWidget(QWidget):
                 Qt.PenJoinStyle.RoundJoin
             )
             painter.setPen(pen)
-            painter.drawLine(16, 24, 22, 30)
-            painter.drawLine(22, 30, 33, 17)
+            painter.drawLine(24, 36, 33, 45)
+            painter.drawLine(33, 45, 50, 25)
 
         elif self.status == "failure":
             pen = QPen(QColor("#b85d58"), 3.0)
@@ -729,14 +730,14 @@ class UpdateStatusWidget(QWidget):
                 Qt.PenCapStyle.RoundCap
             )
             painter.setPen(pen)
-            painter.drawLine(17, 17, 31, 31)
-            painter.drawLine(31, 17, 17, 31)
+            painter.drawLine(25, 25, 47, 47)
+            painter.drawLine(47, 25, 25, 47)
 
         elif self.status == "restart":
             painter.setPen(
                 QColor("#a36d2c")
             )
-            font = QFont("Arial", 21)
+            font = QFont("Arial", 30)
             font.setBold(True)
             painter.setFont(font)
             painter.drawText(
@@ -4493,6 +4494,13 @@ class DesktopPet(QLabel):
         self.speech_bubble.show()
         self.keep_all_windows_on_top()
 
+        if self.update_status_widget.isVisible():
+            self.position_update_status()
+            self.update_status_widget.raise_()
+            keep_widget_topmost(
+                self.update_status_widget
+            )
+
         self.speech_hide_timer.start(
             self.settings["speech_duration"]
             * 1000
@@ -4574,7 +4582,7 @@ class DesktopPet(QLabel):
             self.position_update_status()
 
     def position_update_status(self):
-        """把更新状态小图标放在果子右上方。"""
+        """把更新状态图标放在果子侧边，避开对话气泡。"""
 
         screen = QApplication.screenAt(
             self.frameGeometry().center()
@@ -4589,17 +4597,56 @@ class DesktopPet(QLabel):
         area = screen.availableGeometry()
         widget = self.update_status_widget
 
-        x = (
+        gap = 10
+        center_y = (
+            self.y()
+            + (self.height() - widget.height()) // 2
+        )
+
+        # 优先放在果子右侧；右边空间不够时放左侧。
+        right_x = (
             self.x()
             + self.width()
-            - widget.width()
-            + 6
+            + gap
         )
-        y = self.y() - widget.height() // 2
+        left_x = (
+            self.x()
+            - widget.width()
+            - gap
+        )
 
-        # 顶边空间不够时，贴到果子内部右上角。
-        if y < area.top():
-            y = self.y() + 4
+        if (
+            right_x + widget.width()
+            <= area.right() + 1
+        ):
+            x = right_x
+        elif left_x >= area.left():
+            x = left_x
+        else:
+            # 极窄空间时才退回到果子内部侧边。
+            # 仍然保持在果子的垂直范围内，避免和气泡重叠。
+            if (
+                self.x()
+                + self.width() // 2
+                < area.center().x()
+            ):
+                x = (
+                    self.x()
+                    + self.width()
+                    - widget.width()
+                )
+            else:
+                x = self.x()
+
+        y = max(
+            area.top(),
+            min(
+                center_y,
+                area.bottom()
+                - widget.height()
+                + 1,
+            ),
+        )
 
         x = max(
             area.left(),
@@ -4610,17 +4657,13 @@ class DesktopPet(QLabel):
                 + 1,
             ),
         )
-        y = max(
-            area.top(),
-            min(
-                y,
-                area.bottom()
-                - widget.height()
-                + 1,
-            ),
-        )
 
         widget.move(x, y)
+
+        # 对话气泡刚好出现/重排时，再明确把状态图标抬到最前。
+        if widget.isVisible():
+            widget.raise_()
+            keep_widget_topmost(widget)
 
     def hide_update_status(self):
         self.update_status_hide_timer.stop()
