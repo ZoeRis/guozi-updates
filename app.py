@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 38
+APP_BUILD_VERSION = 39
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -3785,6 +3785,7 @@ class DesktopPet(QLabel):
 
         finally:
             self.update_in_progress = False
+            self.schedule_random_action()
 
 
     def finish_online_update_failure(self, error_text):
@@ -3801,6 +3802,7 @@ class DesktopPet(QLabel):
         self.pending_online_update_package = None
         self.pending_update_timer.stop()
         self.update_in_progress = False
+        self.schedule_random_action()
         self.say("自动重试后仍未更新成功，请稍后再试。")
 
     def check_online_updates(self):
@@ -3811,6 +3813,10 @@ class DesktopPet(QLabel):
             return
 
         self.update_in_progress = True
+
+        # 更新期间不播放“开心摇摆”等随机动作，
+        # 避免启动自动检查时突然冒出“耶嘿！”。
+        self.random_action_timer.stop()
 
         debug_log(
             f"update start state={self.state} "
@@ -4572,6 +4578,18 @@ class DesktopPet(QLabel):
     def play_trigger_action(self, trigger_name):
         """按概率、权重和冷却播放事件动作。"""
 
+        # 在线更新期间不允许随机动作插进来。
+        # 启动时“耶嘿！”来自随机的“开心摇摆”，
+        # 之前它可能刚好在自动检查更新过程中触发。
+        if (
+            trigger_name == "random"
+            and self.update_in_progress
+        ):
+            debug_log(
+                "random action blocked during update"
+            )
+            return False
+
         now = time.monotonic()
         candidates = []
 
@@ -4659,6 +4677,13 @@ class DesktopPet(QLabel):
         random_actions = self.get_random_actions()
 
         if not random_actions:
+            return
+
+        if self.update_in_progress:
+            debug_log(
+                "random action delayed: update in progress"
+            )
+            self.random_action_timer.start(3000)
             return
 
         if (
