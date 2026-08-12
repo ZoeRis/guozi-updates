@@ -1,6 +1,6 @@
 {
-  "version": "5.11-drop-sound-climb50",
-  "app_version": 42,
+  "version": "5.12-update-status-indicator",
+  "app_version": 43,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -30,7 +30,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "06e8dc4cda07e17b761f702a7b5252fbffdbad4208b1f43e37c8d2190a463aa6",
+  "app_sha256": "6c6be8609e7daa6570bf8c7e8fa45761735236d691649a1855e543db613a72ab",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"

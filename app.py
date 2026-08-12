@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 42
+APP_BUILD_VERSION = 43
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -489,6 +489,142 @@ class SleepZzzWidget(QWidget):
             painter.drawText(x, y + float_y, "Z")
 
 
+class UpdateStatusWidget(QWidget):
+    """果子旁边的小型更新状态指示器。"""
+
+    def __init__(self):
+        super().__init__()
+
+        self.status = "idle"
+        self.phase = 0
+
+        self.setFixedSize(30, 30)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+
+        self.animation_timer = QTimer(self)
+        self.animation_timer.setInterval(90)
+        self.animation_timer.timeout.connect(
+            self.advance_animation
+        )
+
+        self.hide()
+
+    def set_status(self, status):
+        self.status = str(status)
+        self.phase = 0
+
+        if self.status in (
+            "checking",
+            "applying",
+        ):
+            self.animation_timer.start()
+        else:
+            self.animation_timer.stop()
+
+        self.update()
+
+    def advance_animation(self):
+        self.phase = (self.phase + 1) % 12
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(
+            QPainter.RenderHint.Antialiasing,
+            True,
+        )
+
+        outer = QRectF(2, 2, 26, 26)
+
+        painter.setPen(
+            QPen(QColor("#6b514a"), 1.6)
+        )
+        painter.setBrush(
+            QColor(255, 255, 255, 238)
+        )
+        painter.drawEllipse(outer)
+
+        if self.status in (
+            "checking",
+            "applying",
+        ):
+            pen = QPen(QColor("#6b514a"), 2.6)
+            pen.setCapStyle(
+                Qt.PenCapStyle.RoundCap
+            )
+            painter.setPen(pen)
+            painter.setBrush(
+                Qt.BrushStyle.NoBrush
+            )
+
+            start_angle = (
+                90 - self.phase * 30
+            ) * 16
+            painter.drawArc(
+                QRectF(7, 7, 16, 16),
+                start_angle,
+                235 * 16,
+            )
+
+        elif self.status == "waiting":
+            painter.setPen(
+                Qt.PenStyle.NoPen
+            )
+            painter.setBrush(
+                QColor("#6b514a")
+            )
+
+            for x in (10, 15, 20):
+                painter.drawEllipse(
+                    QRectF(x - 1.5, 14, 3, 3)
+                )
+
+        elif self.status == "success":
+            pen = QPen(QColor("#4f8a5b"), 2.8)
+            pen.setCapStyle(
+                Qt.PenCapStyle.RoundCap
+            )
+            pen.setJoinStyle(
+                Qt.PenJoinStyle.RoundJoin
+            )
+            painter.setPen(pen)
+            painter.drawLine(8, 15, 13, 20)
+            painter.drawLine(13, 20, 22, 10)
+
+        elif self.status == "failure":
+            pen = QPen(QColor("#b85d58"), 2.8)
+            pen.setCapStyle(
+                Qt.PenCapStyle.RoundCap
+            )
+            painter.setPen(pen)
+            painter.drawLine(9, 9, 21, 21)
+            painter.drawLine(21, 9, 9, 21)
+
+        elif self.status == "restart":
+            painter.setPen(
+                QColor("#a36d2c")
+            )
+            font = QFont("Arial", 17)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "!",
+            )
+
+
 class DesktopPet(QLabel):
 
     online_update_ready = Signal(object)
@@ -646,6 +782,13 @@ class DesktopPet(QLabel):
 
         self.speech_bubble = SpeechBubble()
         self.sleep_zzz = SleepZzzWidget()
+        self.update_status_widget = UpdateStatusWidget()
+
+        self.update_status_hide_timer = QTimer(self)
+        self.update_status_hide_timer.setSingleShot(True)
+        self.update_status_hide_timer.timeout.connect(
+            self.hide_update_status
+        )
 
         self.online_update_ready.connect(
             self.receive_online_update_package
@@ -2741,6 +2884,19 @@ class DesktopPet(QLabel):
                 version_data.get("version", "未知")
             )
 
+            try:
+                remote_app_version = int(
+                    version_data.get(
+                        "app_version",
+                        APP_BUILD_VERSION,
+                    )
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                remote_app_version = APP_BUILD_VERSION
+
             messages_urls = self.trusted_file_candidates(
                 version_data["messages_url"]
             )
@@ -2875,6 +3031,7 @@ class DesktopPet(QLabel):
             self.online_update_ready.emit(
                 {
                     "version": version,
+                    "app_version": remote_app_version,
                     "messages_text": messages_text,
                     "settings_text": settings_text,
                     "actions_text": actions_text,
@@ -3638,6 +3795,7 @@ class DesktopPet(QLabel):
         )
 
         self.pending_online_update_package = package
+        self.set_update_status("waiting")
         self.try_apply_pending_online_update()
 
         if self.pending_online_update_package is not None:
@@ -3670,6 +3828,7 @@ class DesktopPet(QLabel):
         self.pending_online_update_package = None
 
         transaction_started = False
+        self.set_update_status("applying")
 
         try:
             debug_log(
@@ -3727,17 +3886,36 @@ class DesktopPet(QLabel):
                     f"{stats['deleted_sounds']} 个旧音效"
                 )
 
-            self.say(
-                "在线更新完成！"
-                f"版本 {package['version']}，"
-                f"共 {len(self.messages)} 句台词，"
-                f"{greeting_count} 句问候，"
-                f"{len(self.actions)} 个动作，"
-                f"已同步 {stats['image_count']} 张图片，"
-                f"更新了 {stats['sound_count']} 个音效"
-                f"{cleanup_text}"
-                f"{route_text}。"
+            remote_app_version = int(
+                package.get(
+                    "app_version",
+                    APP_BUILD_VERSION,
+                )
             )
+
+            if remote_app_version > APP_BUILD_VERSION:
+                self.set_update_status("restart")
+                self.say(
+                    "资源更新完成！"
+                    f"检测到程序 v{remote_app_version}，"
+                    "请退出并重新打开果子后生效。"
+                )
+            else:
+                self.set_update_status(
+                    "success",
+                    auto_hide_ms=3000,
+                )
+                self.say(
+                    "在线更新完成！"
+                    f"版本 {package['version']}，"
+                    f"共 {len(self.messages)} 句台词，"
+                    f"{greeting_count} 句问候，"
+                    f"{len(self.actions)} 个动作，"
+                    f"已同步 {stats['image_count']} 张图片，"
+                    f"更新了 {stats['sound_count']} 个音效"
+                    f"{cleanup_text}"
+                    f"{route_text}。"
+                )
 
             debug_log(
                 "update transaction finished "
@@ -3785,8 +3963,10 @@ class DesktopPet(QLabel):
             ):
                 pass
 
+            self.set_update_status("failure")
             self.say(
-                "检查更新失败，已保留上一版。"
+                "更新失败了，已保留上一版。"
+                "可以稍后再点一次“检查在线更新”。"
             )
 
         finally:
@@ -3809,13 +3989,17 @@ class DesktopPet(QLabel):
         self.pending_update_timer.stop()
         self.update_in_progress = False
         self.schedule_random_action()
-        self.say("自动重试后仍未更新成功，请稍后再试。")
+        self.set_update_status("failure")
+        self.say(
+            "自动重试后仍未更新成功。"
+            "可以稍后再点一次“检查在线更新”。"
+        )
 
     def check_online_updates(self):
         """后台检查在线更新；网络等待不再卡住桌宠。"""
 
         if self.update_in_progress:
-            self.say("正在检查在线更新……网络不稳时会自动重试。")
+            self.say("还在更新中，请稍等一下～")
             return
 
         self.update_in_progress = True
@@ -3824,12 +4008,17 @@ class DesktopPet(QLabel):
         # 避免启动自动检查时突然冒出“耶嘿！”。
         self.random_action_timer.stop()
 
+        self.set_update_status("checking")
+
         debug_log(
             f"update start state={self.state} "
             f"dragging={self.is_dragging}"
         )
 
-        self.say("正在检查在线更新……网络不稳时会自动重试。")
+        self.say(
+            "正在检查更新……"
+            "网络不稳时会自动重试。"
+        )
 
         worker = threading.Thread(
             target=self.fetch_online_update_package,
@@ -3968,6 +4157,11 @@ class DesktopPet(QLabel):
 
         if self.sleep_zzz.isVisible():
             keep_widget_topmost(self.sleep_zzz)
+
+        if self.update_status_widget.isVisible():
+            keep_widget_topmost(
+                self.update_status_widget
+            )
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -4246,6 +4440,128 @@ class DesktopPet(QLabel):
             and self.sleep_zzz.isVisible()
         ):
             self.position_sleep_zzz()
+
+        if (
+            hasattr(self, "update_status_widget")
+            and self.update_status_widget.isVisible()
+        ):
+            self.position_update_status()
+
+    def position_update_status(self):
+        """把更新状态小图标放在果子右上方。"""
+
+        screen = QApplication.screenAt(
+            self.frameGeometry().center()
+        )
+
+        if screen is None:
+            screen = QApplication.primaryScreen()
+
+        if screen is None:
+            return
+
+        area = screen.availableGeometry()
+        widget = self.update_status_widget
+
+        x = (
+            self.x()
+            + self.width()
+            - widget.width()
+            + 6
+        )
+        y = self.y() - widget.height() // 2
+
+        # 顶边空间不够时，贴到果子内部右上角。
+        if y < area.top():
+            y = self.y() + 4
+
+        x = max(
+            area.left(),
+            min(
+                x,
+                area.right()
+                - widget.width()
+                + 1,
+            ),
+        )
+        y = max(
+            area.top(),
+            min(
+                y,
+                area.bottom()
+                - widget.height()
+                + 1,
+            ),
+        )
+
+        widget.move(x, y)
+
+    def hide_update_status(self):
+        self.update_status_hide_timer.stop()
+        self.update_status_widget.hide()
+
+    def update_status_text(self, status):
+        return {
+            "checking": "正在检查更新",
+            "waiting": "更新已下载，等待果子空闲",
+            "applying": "正在安装更新",
+            "success": "更新成功",
+            "failure": "上次更新失败",
+            "restart": "发现程序更新，需要重启果子",
+        }.get(status, "")
+
+    def set_update_status(
+        self,
+        status,
+        auto_hide_ms=None,
+    ):
+        """显示更新状态，并同步托盘提示。"""
+
+        status = str(status)
+        self.update_status_hide_timer.stop()
+        self.update_status_widget.set_status(status)
+
+        status_text = self.update_status_text(
+            status
+        )
+
+        if status_text:
+            self.update_status_widget.setToolTip(
+                status_text
+            )
+            self.tray_icon.setToolTip(
+                f"果子 · {status_text}"
+            )
+
+        if hasattr(
+            self,
+            "online_update_action",
+        ):
+            menu_text = {
+                "checking": "正在检查在线更新……",
+                "waiting": "更新已下载，等待应用……",
+                "applying": "正在应用在线更新……",
+                "success": "检查在线更新（刚刚成功）",
+                "failure": "检查在线更新（上次失败，点此重试）",
+                "restart": "检查在线更新（需重启果子）",
+            }.get(
+                status,
+                "检查在线更新",
+            )
+            self.online_update_action.setText(
+                menu_text
+            )
+
+        if self.isVisible():
+            self.position_update_status()
+            self.update_status_widget.show()
+            self.update_status_widget.raise_()
+            self.keep_all_windows_on_top()
+
+        if auto_hide_ms is not None:
+            self.update_status_hide_timer.start(
+                int(auto_hide_ms)
+            )
 
     def position_sleep_zzz(self):
         """把 Zzz 放在果子右上方，并限制在屏幕内。"""
@@ -8022,6 +8338,7 @@ class DesktopPet(QLabel):
 
         self.speech_hide_timer.stop()
         self.speech_bubble.hide()
+        self.update_status_widget.hide()
 
         self.state = "normal"
         self.setPixmap(self.normal)
@@ -8036,6 +8353,14 @@ class DesktopPet(QLabel):
             self.state = "normal"
             self.setPixmap(self.normal)
             self.show()
+
+            if (
+                self.update_status_widget.status
+                != "idle"
+            ):
+                self.position_update_status()
+                self.update_status_widget.show()
+
             self.keep_all_windows_on_top()
 
             self.schedule_blink()
@@ -8125,11 +8450,11 @@ class DesktopPet(QLabel):
             self.reload_settings_and_messages
         )
 
-        online_update_action = QAction(
+        self.online_update_action = QAction(
             "检查在线更新",
             self,
         )
-        online_update_action.triggered.connect(
+        self.online_update_action.triggered.connect(
             self.check_online_updates
         )
 
@@ -8184,7 +8509,7 @@ class DesktopPet(QLabel):
         self.tray_menu.addSeparator()
         self.tray_menu.addAction(reload_action)
         self.tray_menu.addAction(
-            online_update_action
+            self.online_update_action
         )
         self.tray_menu.addAction(
             open_messages_action
@@ -9029,6 +9354,9 @@ class DesktopPet(QLabel):
         self.wake_input_locked = False
         self.save_position()
         self.speech_bubble.hide()
+        self.update_status_hide_timer.stop()
+        self.update_status_widget.animation_timer.stop()
+        self.update_status_widget.hide()
         self.drag_animation_timer.stop()
         self.bounce_timer.stop()
         self.custom_action_timer.stop()
