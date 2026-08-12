@@ -65,7 +65,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 39
+APP_BUILD_VERSION = 42
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -2321,6 +2321,12 @@ class DesktopPet(QLabel):
 
                 if filename not in filenames:
                     filenames.append(filename)
+
+        # 程序内置行为需要的线上音效也一起同步。
+        # drop.wav 用于拖拽松手后的落地声音，
+        # 不依赖 actions.json 里的某个动作触发。
+        if "drop.wav" not in filenames:
+            filenames.append("drop.wav")
 
         if len(filenames) > 100:
             raise ValueError("动作音效数量过多。")
@@ -4728,6 +4734,9 @@ class DesktopPet(QLabel):
                 ):
                     filenames.append(filename)
 
+        if "drop.wav" not in filenames:
+            filenames.append("drop.wav")
+
         return filenames
 
     def iter_cached_sound_effects(self):
@@ -6557,10 +6566,10 @@ class DesktopPet(QLabel):
 
         self.state = "walking"
 
-        # 70% 的横向散步会主动去最近的边缘。
-        # 剩下 30% 还是普通随便走一段，避免果子每次散步都在扒墙。
+        # 50% 的横向散步会主动去最近的边缘。
+        # 剩下 50% 还是普通随便走一段，降低爬墙频率。
         self.horizontal_walk_to_edge = (
-            random.random() < 0.70
+            random.random() < 0.50
         )
 
         if self.horizontal_walk_to_edge:
@@ -6721,10 +6730,10 @@ class DesktopPet(QLabel):
         ):
             self.move(current_x, current_y)
 
-        # 和横向模式一样：70% 的散步会主动找墙。
-        # 这样开“满屏幕乱走”时也能正常看到爬墙。
+        # 和横向模式一样：50% 的散步会主动找墙。
+        # 仍然保留爬墙，但不会像之前那么频繁。
         self.full_screen_walk_to_edge = (
-            random.random() < 0.70
+            random.random() < 0.50
         )
 
         target_x = current_x
@@ -7727,6 +7736,7 @@ class DesktopPet(QLabel):
     def start_drag_release_landing(self):
         """拖动松手后的即时落地反馈。"""
 
+        self.play_action_sound("drop.wav")
         self.say("嘿咻！")
         self.start_release_bounce()
 

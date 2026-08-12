@@ -1,6 +1,6 @@
 {
-  "version": "5.10-angry-sound",
-  "app_version": 39,
+  "version": "5.11-drop-sound-climb50",
+  "app_version": 42,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -30,7 +30,7 @@
     "drag2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "794beb559cedf64caf137934974a98f6af7999ac496e6e57615a9644e4bc34b1",
+  "app_sha256": "06e8dc4cda07e17b761f702a7b5252fbffdbad4208b1f43e37c8d2190a463aa6",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"
