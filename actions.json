@@ -1,21 +1,31 @@
 {
-  "version": 30,
+  "version": 31,
   "actions": [
     {
       "name": "开心摇摆",
-      "frames": [
-        "happy.PNG",
-        "normal.PNG"
-      ],
-      "frame_interval": 220,
-      "loops": 4,
-      "speech": "耶嘿！",
-      "trigger": "both",
       "steps": [
         {
           "type": "sound",
           "file": "happywave.wav"
+        },
+        {
+          "type": "say",
+          "text": "耶嘿！"
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "happy.PNG",
+            "normal.PNG"
+          ],
+          "frame_interval": 220,
+          "loops": 4,
+          "playback": "loop"
         }
+      ],
+      "triggers": [
+        "manual",
+        "random"
       ]
     },
     {
