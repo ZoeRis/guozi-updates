@@ -1,6 +1,6 @@
 {
-  "version": "5.24-mute",
-  "app_version": 53,
+  "version": "5.25-drag-walking-running-fix",
+  "app_version": 54,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -37,7 +37,7 @@
     "update.png"
   ],
   "app_api": 1,
-  "app_sha256": "5bd2eb24a75caf3cfe9e8a1c8e980187e54ec12d96008127bcecadf87832a005",
+  "app_sha256": "4399cf52ac80712c580a0b4528d65423c5b01a731083fe18a1b13cb10f3b2617",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958",

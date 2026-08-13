@@ -67,7 +67,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 53
+APP_BUILD_VERSION = 54
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -9886,9 +9886,12 @@ class DesktopPet(QLabel):
     def pickup_drag_is_allowed(self):
         """判断当前动作能否被“提屁股”拖动直接接管。"""
 
-        if self.update_in_progress:
-            return False
-
+        # normal / walking（包括双击召唤时的跑步）/
+        # bouncing / inertial 都应该立刻切换成 drag1/drag2。
+        #
+        # 在线更新只负责后台下载；真正应用资源本来就会等待安全状态，
+        # 所以不再因为 update_in_progress 而把 walking 拖动降级成
+        # “保留走路动画的拖动”。
         if self.state in (
             "normal",
             "walking",
@@ -9897,26 +9900,59 @@ class DesktopPet(QLabel):
         ):
             return True
 
-        if (
-            self.state == "custom_action"
-            and self.active_custom_action_trigger
-            == "drag_release"
-        ):
-            return True
+        if self.state == "custom_action":
+            current_type = None
+
+            if isinstance(
+                self.custom_action_current_step,
+                dict,
+            ):
+                current_type = (
+                    self.custom_action_current_step.get(
+                        "type"
+                    )
+                )
+
+            # 原有 drag_release 可以拿起来；
+            # 五连戳逃跑的 move_away_mouse 跑步也允许直接抓住。
+            if (
+                self.active_custom_action_trigger
+                == "drag_release"
+                or current_type == "move_away_mouse"
+            ):
+                return True
 
         return False
 
     def prepare_for_pickup_drag(self):
         """开始提屁股拖动前，只停止允许被打断的轻量动作。"""
 
-        if (
-            self.state == "custom_action"
-            and self.active_custom_action_trigger
-            == "drag_release"
-        ):
-            self.stop_custom_action(
-                resume=False
-            )
+        if self.state == "custom_action":
+            current_type = None
+
+            if isinstance(
+                self.custom_action_current_step,
+                dict,
+            ):
+                current_type = (
+                    self.custom_action_current_step.get(
+                        "type"
+                    )
+                )
+
+            if (
+                self.active_custom_action_trigger
+                == "drag_release"
+                or current_type == "move_away_mouse"
+            ):
+                debug_log(
+                    "pickup drag interrupts custom movement "
+                    f"trigger={self.active_custom_action_trigger} "
+                    f"step={current_type}"
+                )
+                self.stop_custom_action(
+                    resume=False
+                )
 
         if self.state == "walking":
             self.stop_walk_timers()
@@ -10396,9 +10432,10 @@ class DesktopPet(QLabel):
                 self.is_dragging = True
 
                 # 可随时拿起来的状态：
-                # normal / walking / bouncing /
-                # drag_release 的“嘿咻”动作。
-                # 其它动画继续采用“只移动、不换图”。
+                # normal / walking / 双击召唤跑步 / 五连戳逃跑 /
+                # bouncing / drag_release 的“嘿咻”动作。
+                # 这些状态都会切换成 drag1/drag2；
+                # 其它特殊动画继续采用“只移动、不换图”。
                 if self.pickup_drag_is_allowed():
                     debug_log(
                         "drag mode=pickup "
