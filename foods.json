@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "max_fullness": 100,
+
+  "too_full_lines": [
+    "果子吃不下咧！",
+    "我现在饱啦……",
+    "我要溜达饿了再吃！"
+  ],
+
+  "foods": [
+    {
+      "id": "chocolate",
+      "name": "巧克力",
+      "frames": [
+        "chocolate1.PNG",
+        "chocolate2.PNG"
+      ],
+      "fullness_gain": 6,
+      "preference": "love",
+      "reaction_lines": [
+        "嘿嘿，甜甜的。",
+        "牛奶巧克力最棒啦！",
+        "（嘎吧）"
+      ]
+    },
+
+    {
+      "id": "fries",
+      "name": "薯条",
+      "frames": [
+        "fries1.PNG",
+        "fries2.PNG"
+      ],
+      "fullness_gain": 10,
+      "preference": "love",
+      "reaction_lines": [
+        "热热脆脆的好好吃哦！",
+        "吃薯条吃得停不下啦。",
+        "土豆门！"
+      ]
+    },
+
+    {
+      "id": "hamburger",
+      "name": "汉堡",
+      "frames": [
+        "hamburger1.PNG",
+        "hamburger2.PNG"
+      ],
+      "fullness_gain": 18,
+      "preference": "love",
+      "reaction_lines": [
+        "汉堡香香！",
+        "面包用黄油烤过了呀！",
+        "不要酸黄瓜可以吗？"
+      ]
+    },
+
+    {
+      "id": "noodle",
+      "name": "面条",
+      "frames": [
+        "noodle1.PNG",
+        "noodle2.PNG"
+      ],
+      "fullness_gain": 16,
+      "preference": "love",
+      "reaction_lines": [
+        "（吸溜吸溜）",
+        "（呼噜呼噜）",
+        "（嘬嘬嘬）"
+      ]
+    },
+
+    {
+      "id": "pizza",
+      "name": "披萨",
+      "frames": [
+        "pizza1.PNG",
+        "pizza2.PNG"
+      ],
+      "fullness_gain": 15,
+      "preference": "love",
+      "reaction_lines": [
+        "好——长的拉丝！",
+        "辣蜂蜜腊肠披萨最棒了！",
+        "（嚼嚼嚼）（咬咬咬）"
+      ]
+    },
+
+    {
+      "id": "sausage",
+      "name": "香肠",
+      "frames": [
+        "sausage1.PNG",
+        "sausage2.PNG"
+      ],
+      "fullness_gain": 12,
+      "preference": "love",
+      "reaction_lines": [
+        "这个肠好好吃哦！",
+        "我可以蘸番茄酱吗？",
+        "爆汁儿啦！"
+      ]
+    }
+  ]
+}

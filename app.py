@@ -61,11 +61,13 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 MESSAGES_FILE = APP_DIR / "messages.txt"
 ACTIONS_FILE = APP_DIR / "actions.json"
 GREETINGS_FILE = APP_DIR / "greetings.json"
+FOODS_FILE = APP_DIR / "foods.json"
+PET_STATE_FILE = APP_DIR / "pet_state.json"
 ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 48
+APP_BUILD_VERSION = 49
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -761,6 +763,17 @@ class DesktopPet(QLabel):
         self.messages = []
         self.actions = []
         self.greetings = {}
+
+        # ---------- 喂食系统 ----------
+        self.foods = []
+        self.too_full_lines = []
+        self.max_fullness = 100
+        self.too_full_threshold = 90
+        self.initial_fullness = 50
+        self.fullness_decay_seconds = 600
+        self.fullness = 50
+        self.fullness_updated_at = time.time()
+
         # 每个音效只保留一个长期复用的 QSoundEffect。
         # QSoundEffect 本身就是给低延迟反馈音效使用的；
         # 反复复用同一个对象比创建多个并发播放器更稳定。
@@ -882,6 +895,8 @@ class DesktopPet(QLabel):
         self.load_settings()
         self.load_messages()
         self.load_actions()
+        self.load_foods()
+        self.load_pet_state()
         self.preload_action_sounds()
         self.load_greetings()
         self.load_all_images()
@@ -1118,6 +1133,15 @@ class DesktopPet(QLabel):
 
         if sys.platform == "win32":
             self.global_mouse_timer.start()
+
+        # ---------- 饱食度 ----------
+
+        self.fullness_decay_timer = QTimer(self)
+        self.fullness_decay_timer.setInterval(60000)
+        self.fullness_decay_timer.timeout.connect(
+            self.apply_fullness_decay
+        )
+        self.fullness_decay_timer.start()
 
         # ---------- 托盘 ----------
 
@@ -1917,6 +1941,776 @@ class DesktopPet(QLabel):
         if hasattr(self, "tray_actions_menu"):
             self.refresh_tray_actions_menu()
 
+    def parse_foods_text(self, foods_text):
+        """验证 foods.json，并返回程序实际使用的安全配置。"""
+
+        data = json.loads(foods_text)
+
+        if not isinstance(data, dict):
+            raise ValueError("食物文件必须是对象。")
+
+        try:
+            max_fullness = int(
+                data.get("max_fullness", 100)
+            )
+        except (TypeError, ValueError):
+            max_fullness = 100
+
+        max_fullness = max(
+            10,
+            min(max_fullness, 10000),
+        )
+
+        try:
+            too_full_threshold = int(
+                data.get(
+                    "too_full_threshold",
+                    round(max_fullness * 0.90),
+                )
+            )
+        except (TypeError, ValueError):
+            too_full_threshold = round(
+                max_fullness * 0.90
+            )
+
+        too_full_threshold = max(
+            1,
+            min(
+                too_full_threshold,
+                max_fullness,
+            ),
+        )
+
+        try:
+            initial_fullness = int(
+                data.get(
+                    "initial_fullness",
+                    round(max_fullness * 0.50),
+                )
+            )
+        except (TypeError, ValueError):
+            initial_fullness = round(
+                max_fullness * 0.50
+            )
+
+        initial_fullness = max(
+            0,
+            min(initial_fullness, max_fullness),
+        )
+
+        try:
+            fullness_decay_seconds = int(
+                data.get(
+                    "fullness_decay_seconds_per_point",
+                    600,
+                )
+            )
+        except (TypeError, ValueError):
+            fullness_decay_seconds = 600
+
+        # 默认每 10 分钟掉 1 点；即使以后自己改，
+        # 也限制在 1 分钟 ~ 24 小时/点之间。
+        fullness_decay_seconds = max(
+            60,
+            min(fullness_decay_seconds, 86400),
+        )
+
+        raw_too_full_lines = data.get(
+            "too_full_lines",
+            [],
+        )
+
+        if not isinstance(
+            raw_too_full_lines,
+            list,
+        ):
+            raise ValueError(
+                "too_full_lines 必须是列表。"
+            )
+
+        too_full_lines = [
+            str(line).strip()[:160]
+            for line in raw_too_full_lines[:50]
+            if isinstance(line, str)
+            and line.strip()
+        ]
+
+        if not too_full_lines:
+            raise ValueError(
+                "至少需要一句吃太饱台词。"
+            )
+
+        raw_foods = data.get("foods", [])
+
+        if not isinstance(raw_foods, list):
+            raise ValueError("foods 必须是列表。")
+
+        foods = []
+        seen_ids = set()
+        valid_preferences = {
+            "love",
+            "like",
+            "neutral",
+            "dislike",
+            "hate",
+        }
+
+        for raw_food in raw_foods[:100]:
+            if not isinstance(raw_food, dict):
+                continue
+
+            food_id = str(
+                raw_food.get("id", "")
+            ).strip().lower()[:40]
+
+            if (
+                not food_id
+                or not all(
+                    character.isalnum()
+                    or character in ("_", "-")
+                    for character in food_id
+                )
+                or food_id in seen_ids
+            ):
+                raise ValueError(
+                    "食物 id 无效或重复。"
+                )
+
+            name = str(
+                raw_food.get("name", "")
+            ).strip()[:40]
+
+            if not name:
+                raise ValueError(
+                    "食物名称不能为空。"
+                )
+
+            raw_frames = raw_food.get(
+                "frames",
+                [],
+            )
+
+            if (
+                not isinstance(raw_frames, list)
+                or not raw_frames
+            ):
+                raise ValueError(
+                    f"{name} 没有吃东西动画。"
+                )
+
+            frames = []
+
+            for filename in raw_frames[:12]:
+                safe_name = (
+                    self.sanitize_action_filename(
+                        filename
+                    )
+                )
+
+                if safe_name is None:
+                    raise ValueError(
+                        f"{name} 的图片文件名不安全。"
+                    )
+
+                frames.append(safe_name)
+
+            raw_reaction_frames = (
+                raw_food.get(
+                    "reaction_frames",
+                    [],
+                )
+            )
+
+            reaction_frames = []
+
+            if raw_reaction_frames:
+                if not isinstance(
+                    raw_reaction_frames,
+                    list,
+                ):
+                    raise ValueError(
+                        f"{name} 的 reaction_frames 格式错误。"
+                    )
+
+                for filename in (
+                    raw_reaction_frames[:8]
+                ):
+                    safe_name = (
+                        self.sanitize_action_filename(
+                            filename
+                        )
+                    )
+
+                    if safe_name is None:
+                        raise ValueError(
+                            f"{name} 的反应图片文件名不安全。"
+                        )
+
+                    reaction_frames.append(
+                        safe_name
+                    )
+
+            try:
+                fullness_gain = int(
+                    raw_food.get(
+                        "fullness_gain",
+                        0,
+                    )
+                )
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"{name} 的饱食度数值无效。"
+                )
+
+            fullness_gain = max(
+                0,
+                min(
+                    fullness_gain,
+                    max_fullness,
+                ),
+            )
+
+            preference = str(
+                raw_food.get(
+                    "preference",
+                    "neutral",
+                )
+            ).strip().lower()
+
+            if (
+                preference
+                not in valid_preferences
+            ):
+                raise ValueError(
+                    f"{name} 的喜好等级无效。"
+                )
+
+            raw_lines = raw_food.get(
+                "reaction_lines",
+                [],
+            )
+
+            if not isinstance(raw_lines, list):
+                raise ValueError(
+                    f"{name} 的 reaction_lines 格式错误。"
+                )
+
+            reaction_lines = [
+                str(line).strip()[:160]
+                for line in raw_lines[:50]
+                if isinstance(line, str)
+                and line.strip()
+            ]
+
+            if not reaction_lines:
+                raise ValueError(
+                    f"{name} 至少需要一句吃完台词。"
+                )
+
+            try:
+                frame_interval = int(
+                    raw_food.get(
+                        "frame_interval",
+                        240,
+                    )
+                )
+            except (TypeError, ValueError):
+                frame_interval = 240
+
+            frame_interval = max(
+                100,
+                min(frame_interval, 3000),
+            )
+
+            try:
+                loops = int(
+                    raw_food.get(
+                        "loops",
+                        3,
+                    )
+                )
+            except (TypeError, ValueError):
+                loops = 3
+
+            loops = max(1, min(loops, 20))
+
+            foods.append(
+                {
+                    "id": food_id,
+                    "name": name,
+                    "frames": frames,
+                    "reaction_frames": (
+                        reaction_frames
+                    ),
+                    "fullness_gain": (
+                        fullness_gain
+                    ),
+                    "preference": preference,
+                    "reaction_lines": (
+                        reaction_lines
+                    ),
+                    "frame_interval": (
+                        frame_interval
+                    ),
+                    "loops": loops,
+                }
+            )
+            seen_ids.add(food_id)
+
+        if not foods:
+            raise ValueError(
+                "foods.json 里没有可用食物。"
+            )
+
+        return {
+            "version": data.get("version", 1),
+            "max_fullness": max_fullness,
+            "too_full_threshold": (
+                too_full_threshold
+            ),
+            "initial_fullness": (
+                initial_fullness
+            ),
+            "fullness_decay_seconds_per_point": (
+                fullness_decay_seconds
+            ),
+            "too_full_lines": too_full_lines,
+            "foods": foods,
+        }
+
+    def load_foods(self):
+        """读取食物配置；文件暂时缺失时不影响果子启动。"""
+
+        if not FOODS_FILE.exists():
+            self.foods = []
+            self.too_full_lines = []
+            return
+
+        try:
+            config = self.parse_foods_text(
+                FOODS_FILE.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            json.JSONDecodeError,
+        ) as exc:
+            debug_log(
+                f"foods load failed {exc!r}"
+            )
+            self.foods = []
+            self.too_full_lines = []
+            return
+
+        self.foods = config["foods"]
+        self.too_full_lines = (
+            config["too_full_lines"]
+        )
+        self.max_fullness = (
+            config["max_fullness"]
+        )
+        self.too_full_threshold = (
+            config["too_full_threshold"]
+        )
+        self.initial_fullness = (
+            config["initial_fullness"]
+        )
+        self.fullness_decay_seconds = (
+            config[
+                "fullness_decay_seconds_per_point"
+            ]
+        )
+
+        if hasattr(self, "fullness"):
+            self.fullness = max(
+                0,
+                min(
+                    int(self.fullness),
+                    self.max_fullness,
+                ),
+            )
+
+        if hasattr(self, "tray_foods_menu"):
+            self.refresh_tray_foods_menu()
+
+    def load_pet_state(self):
+        """读取本机饱食度；第一次运行会自动创建 pet_state.json。"""
+
+        now = time.time()
+        fullness = self.initial_fullness
+        updated_at = now
+
+        if PET_STATE_FILE.exists():
+            try:
+                data = json.loads(
+                    PET_STATE_FILE.read_text(
+                        encoding="utf-8"
+                    )
+                )
+
+                if isinstance(data, dict):
+                    fullness = int(
+                        data.get(
+                            "fullness",
+                            fullness,
+                        )
+                    )
+                    updated_at = float(
+                        data.get(
+                            "updated_at",
+                            now,
+                        )
+                    )
+            except (
+                OSError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
+                fullness = self.initial_fullness
+                updated_at = now
+
+        self.fullness = max(
+            0,
+            min(fullness, self.max_fullness),
+        )
+        self.fullness_updated_at = (
+            updated_at
+            if updated_at > 0
+            else now
+        )
+
+        self.apply_fullness_decay(
+            save=False
+        )
+        self.save_pet_state()
+
+    def save_pet_state(self):
+        """保存本机饱食度，不参与线上资源更新。"""
+
+        try:
+            PET_STATE_FILE.write_text(
+                json.dumps(
+                    {
+                        "fullness": int(
+                            self.fullness
+                        ),
+                        "updated_at": float(
+                            self.fullness_updated_at
+                        ),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def apply_fullness_decay(
+        self,
+        save=True,
+    ):
+        """按真实经过时间缓慢降低饱食度。"""
+
+        now = time.time()
+
+        if (
+            now < self.fullness_updated_at
+            or self.fullness_decay_seconds <= 0
+        ):
+            self.fullness_updated_at = now
+            if save:
+                self.save_pet_state()
+            return False
+
+        elapsed = (
+            now - self.fullness_updated_at
+        )
+        points = int(
+            elapsed
+            // self.fullness_decay_seconds
+        )
+
+        if points <= 0:
+            return False
+
+        old_fullness = self.fullness
+        self.fullness = max(
+            0,
+            self.fullness - points,
+        )
+
+        if self.fullness <= 0:
+            self.fullness_updated_at = now
+        else:
+            self.fullness_updated_at += (
+                points
+                * self.fullness_decay_seconds
+            )
+
+        changed = (
+            self.fullness != old_fullness
+        )
+
+        if save:
+            self.save_pet_state()
+
+        if (
+            changed
+            and hasattr(
+                self,
+                "tray_foods_menu",
+            )
+        ):
+            self.refresh_tray_foods_menu()
+
+        return changed
+
+    def fullness_status_text(self):
+        return (
+            f"饱食度：{self.fullness}"
+            f" / {self.max_fullness}"
+        )
+
+    def food_by_id(self, food_id):
+        for food in self.foods:
+            if food.get("id") == food_id:
+                return food
+        return None
+
+    def can_feed_now(self):
+        """喂食不会打断启动、更新、拖拽或另一段完整动作。"""
+
+        if self.update_in_progress:
+            return False
+
+        if self.is_dragging:
+            return False
+
+        if self.state in (
+            "startup_hello",
+            "custom_action",
+            "dragging",
+        ):
+            return False
+
+        return True
+
+    def food_reaction_frames(
+        self,
+        food,
+    ):
+        """未来可给单个食物配置专属吃后表情。"""
+
+        configured = food.get(
+            "reaction_frames",
+            [],
+        )
+
+        if configured:
+            return list(configured)
+
+        preference = food.get(
+            "preference",
+            "neutral",
+        )
+
+        if preference in (
+            "love",
+            "like",
+        ):
+            return ["happy.PNG"]
+
+        return ["normal.PNG"]
+
+    def start_feeding(self, food):
+        """从菜单触发一次喂食。"""
+
+        if (
+            not isinstance(food, dict)
+            or not self.can_feed_now()
+        ):
+            return
+
+        self.apply_fullness_decay()
+
+        if (
+            self.fullness
+            >= self.too_full_threshold
+        ):
+            if self.too_full_lines:
+                self.say(
+                    random.choice(
+                        self.too_full_lines
+                    )
+                )
+            return
+
+        food_id = food.get("id")
+        current_food = self.food_by_id(
+            food_id
+        )
+
+        if current_food is None:
+            return
+
+        steps = [
+            {
+                "type": "frames",
+                "frames": list(
+                    current_food["frames"]
+                ),
+                "frame_interval": int(
+                    current_food[
+                        "frame_interval"
+                    ]
+                ),
+                "loops": int(
+                    current_food["loops"]
+                ),
+                "playback": "loop",
+            },
+            {
+                "type": "say",
+                "texts": list(
+                    current_food[
+                        "reaction_lines"
+                    ]
+                ),
+            },
+            {
+                "type": "frames",
+                "frames": (
+                    self.food_reaction_frames(
+                        current_food
+                    )
+                ),
+                "frame_interval": 650,
+                "loops": 1,
+                "playback": "loop",
+            },
+            {
+                "type": "feed_finish",
+                "food_id": food_id,
+            },
+        ]
+
+        self.play_custom_action(
+            {
+                "name": (
+                    "吃"
+                    + current_food["name"]
+                ),
+                "steps": steps,
+            },
+            trigger_name=(
+                f"feeding:{food_id}"
+            ),
+        )
+
+    def finish_feeding(self, food_id):
+        """吃完后才真正增加饱食度并落盘。"""
+
+        food = self.food_by_id(food_id)
+
+        if food is None:
+            return
+
+        self.apply_fullness_decay()
+
+        self.fullness = min(
+            self.max_fullness,
+            self.fullness
+            + int(
+                food.get(
+                    "fullness_gain",
+                    0,
+                )
+            ),
+        )
+
+        # 吃完一份后，从此刻重新开始计算下一次变饿。
+        self.fullness_updated_at = time.time()
+        self.save_pet_state()
+
+        if hasattr(
+            self,
+            "tray_foods_menu",
+        ):
+            self.refresh_tray_foods_menu()
+
+        debug_log(
+            "feeding finished "
+            f"food={food_id} "
+            f"fullness={self.fullness}"
+        )
+
+    def populate_food_menu(
+        self,
+        foods_menu,
+    ):
+        """向右键菜单或托盘菜单填入当前食物。"""
+
+        self.apply_fullness_decay()
+
+        status_action = QAction(
+            self.fullness_status_text(),
+            foods_menu,
+        )
+        status_action.setEnabled(False)
+        foods_menu.addAction(status_action)
+        foods_menu.addSeparator()
+
+        if not self.foods:
+            empty_action = QAction(
+                "暂无可用食物",
+                foods_menu,
+            )
+            empty_action.setEnabled(False)
+            foods_menu.addAction(
+                empty_action
+            )
+            return
+
+        enabled = self.can_feed_now()
+
+        for food in self.foods:
+            food_action = QAction(
+                food["name"],
+                foods_menu,
+            )
+            food_action.setEnabled(enabled)
+            food_action.triggered.connect(
+                lambda checked=False, data=food:
+                self.start_feeding(data)
+            )
+            foods_menu.addAction(
+                food_action
+            )
+
+    def add_foods_to_menu(self, menu):
+        foods_menu = menu.addMenu("喂果子")
+        self.populate_food_menu(
+            foods_menu
+        )
+
+    def refresh_tray_foods_menu(self):
+        if not hasattr(
+            self,
+            "tray_foods_menu",
+        ):
+            return
+
+        self.tray_foods_menu.clear()
+        self.populate_food_menu(
+            self.tray_foods_menu
+        )
+
     def image_path(self, filename):
         return IMAGE_DIR / filename
 
@@ -2084,6 +2878,7 @@ class DesktopPet(QLabel):
             self.load_settings()
             self.load_messages()
             self.load_actions()
+            self.load_foods()
             self.refresh_action_sound_cache()
             self.load_greetings()
             self.load_all_images()
@@ -2136,7 +2931,7 @@ class DesktopPet(QLabel):
         )
 
         if announce:
-            self.say("设置、台词和动作已重新载入。")
+            self.say("设置、台词、动作和食物已重新载入。")
 
         return True
 
@@ -2395,6 +3190,7 @@ class DesktopPet(QLabel):
             "settings.json",
             "actions.json",
             "greetings.json",
+            "foods.json",
         ):
             raise ValueError("更新文件路径不安全。")
 
@@ -2526,6 +3322,39 @@ class DesktopPet(QLabel):
 
         if len(filenames) > 200:
             raise ValueError("动作图片数量过多。")
+
+        return filenames
+
+    def food_image_filenames_from_text(
+        self,
+        foods_text,
+    ):
+        """提取 foods.json 引用的全部吃东西图片。"""
+
+        config = self.parse_foods_text(
+            foods_text
+        )
+        filenames = []
+
+        for food in config["foods"]:
+            for filename in (
+                list(food["frames"])
+                + list(
+                    food.get(
+                        "reaction_frames",
+                        [],
+                    )
+                )
+            ):
+                if filename not in filenames:
+                    filenames.append(
+                        filename
+                    )
+
+        if len(filenames) > 300:
+            raise ValueError(
+                "食物图片数量过多。"
+            )
 
         return filenames
 
@@ -3038,6 +3867,13 @@ class DesktopPet(QLabel):
             greetings_urls = self.trusted_file_candidates(
                 version_data["greetings_url"]
             )
+            foods_urls = self.trusted_file_candidates(
+                version_data.get(
+                    "foods_url",
+                    RAW_REPO_BASE_URL
+                    + "foods.json",
+                )
+            )
 
             messages_text, messages_source = (
                 self.download_text_from_sources(
@@ -3063,12 +3899,19 @@ class DesktopPet(QLabel):
                     preferred_source,
                 )
             )
+            foods_text, foods_source = (
+                self.download_text_from_sources(
+                    foods_urls,
+                    preferred_source,
+                )
+            )
 
             if 1 in (
                 messages_source,
                 settings_source,
                 actions_source,
                 greetings_source,
+                foods_source,
             ):
                 used_backup = True
 
@@ -3082,10 +3925,16 @@ class DesktopPet(QLabel):
                     actions_text
                 )
             )
+            food_image_filenames = (
+                self.food_image_filenames_from_text(
+                    foods_text
+                )
+            )
             image_filenames = (
                 self.merge_unique_filenames(
                     core_image_filenames,
                     action_image_filenames,
+                    food_image_filenames,
                 )
             )
             sound_filenames = (
@@ -3165,6 +4014,7 @@ class DesktopPet(QLabel):
                     "settings_text": settings_text,
                     "actions_text": actions_text,
                     "greetings_text": greetings_text,
+                    "foods_text": foods_text,
                     "image_filenames": image_filenames,
                     "sound_filenames": sound_filenames,
                     "image_data": image_data,
@@ -3197,6 +4047,7 @@ class DesktopPet(QLabel):
             "settings.json": SETTINGS_FILE,
             "actions.json": ACTIONS_FILE,
             "greetings.json": GREETINGS_FILE,
+            "foods.json": FOODS_FILE,
             "online_images": ONLINE_IMAGE_DIR,
             "online_sounds": ONLINE_SOUND_DIR,
         }
@@ -3350,6 +4201,9 @@ class DesktopPet(QLabel):
         greetings_text = package[
             "greetings_text"
         ]
+        foods_text = package[
+            "foods_text"
+        ]
 
         message_lines = [
             line.strip()
@@ -3446,6 +4300,10 @@ class DesktopPet(QLabel):
                     f"问候语分类无效：{key}"
                 )
 
+        foods_data = self.parse_foods_text(
+            foods_text
+        )
+
         return {
             "messages.txt": (
                 "\n".join(
@@ -3472,6 +4330,14 @@ class DesktopPet(QLabel):
             "greetings.json": (
                 json.dumps(
                     greetings_data,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n"
+            ),
+            "foods.json": (
+                json.dumps(
+                    foods_data,
                     ensure_ascii=False,
                     indent=2,
                 )
@@ -4172,6 +5038,9 @@ class DesktopPet(QLabel):
 
     def open_settings_file(self):
         self.open_file(SETTINGS_FILE)
+
+    def open_foods_file(self):
+        self.open_file(FOODS_FILE)
 
     # ---------- 位置 ----------
 
@@ -5884,6 +6753,13 @@ class DesktopPet(QLabel):
 
             if step_type == "stop_sound":
                 self.stop_action_sound()
+                self.custom_action_step_index += 1
+                continue
+
+            if step_type == "feed_finish":
+                self.finish_feeding(
+                    step.get("food_id")
+                )
                 self.custom_action_step_index += 1
                 continue
 
@@ -8811,7 +9687,7 @@ class DesktopPet(QLabel):
         )
 
         reload_action = QAction(
-            "重新载入设置、台词和动作",
+            "重新载入设置、台词、动作和食物",
             self,
         )
         reload_action.triggered.connect(
@@ -8842,6 +9718,14 @@ class DesktopPet(QLabel):
             self.open_settings_file
         )
 
+        open_foods_action = QAction(
+            "打开食物文件",
+            self,
+        )
+        open_foods_action.triggered.connect(
+            self.open_foods_file
+        )
+
         exit_action = QAction(
             "退出果子",
             self,
@@ -8870,6 +9754,10 @@ class DesktopPet(QLabel):
             self.tray_sleep_action
         )
         self.tray_menu.addAction(speak_action)
+        self.tray_foods_menu = (
+            self.tray_menu.addMenu("喂果子")
+        )
+        self.refresh_tray_foods_menu()
         self.tray_actions_menu = (
             self.tray_menu.addMenu("线上动作")
         )
@@ -8884,6 +9772,9 @@ class DesktopPet(QLabel):
         )
         self.tray_menu.addAction(
             open_settings_action
+        )
+        self.tray_menu.addAction(
+            open_foods_action
         )
         self.tray_menu.addSeparator()
         self.tray_menu.addAction(exit_action)
@@ -9653,7 +10544,7 @@ class DesktopPet(QLabel):
         )
 
         reload_action = QAction(
-            "重新载入设置、台词和动作",
+            "重新载入设置、台词、动作和食物",
             self,
         )
         reload_action.triggered.connect(
@@ -9684,6 +10575,14 @@ class DesktopPet(QLabel):
             self.open_settings_file
         )
 
+        open_foods_action = QAction(
+            "打开食物文件",
+            self,
+        )
+        open_foods_action.triggered.connect(
+            self.open_foods_file
+        )
+
         hide_action = QAction(
             "隐藏果子",
             self,
@@ -9704,12 +10603,14 @@ class DesktopPet(QLabel):
         menu.addMenu(movement_menu)
         menu.addAction(sleep_action)
         menu.addAction(speak_action)
+        self.add_foods_to_menu(menu)
         self.add_actions_to_menu(menu)
         menu.addSeparator()
         menu.addAction(reload_action)
         menu.addAction(online_update_action)
         menu.addAction(open_messages_action)
         menu.addAction(open_settings_action)
+        menu.addAction(open_foods_action)
         menu.addSeparator()
         menu.addAction(hide_action)
         menu.addAction(exit_action)
@@ -9721,6 +10622,8 @@ class DesktopPet(QLabel):
     def quit_pet(self):
         self.wake_input_locked = False
         self.save_position()
+        self.save_pet_state()
+        self.fullness_decay_timer.stop()
         self.speech_bubble.hide()
         self.update_status_hide_timer.stop()
         self.update_status_widget.animation_timer.stop()
@@ -9750,6 +10653,8 @@ class DesktopPet(QLabel):
 
     def closeEvent(self, event):
         self.save_position()
+        self.save_pet_state()
+        self.fullness_decay_timer.stop()
         self.speech_bubble.hide()
         self.drag_animation_timer.stop()
         self.bounce_timer.stop()

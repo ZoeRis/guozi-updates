@@ -1,6 +1,6 @@
 {
-  "version": "5.19-restore-happy-sway",
-  "app_version": 48,
+  "version": "5.20-feeding-system",
+  "app_version": 49,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -37,8 +37,9 @@
     "update.png"
   ],
   "app_api": 1,
-  "app_sha256": "ebefe5c6f1c33bb9c9a09b602f458db099e4e74fb6b13f24e0d960905fdf5d1e",
+  "app_sha256": "5d2c7d1881981c027ea145471cb3321f2ba60e4cdf8f646a5c2f74f63f4d9ea3",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
-  "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958"
+  "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958",
+  "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json"
 }
