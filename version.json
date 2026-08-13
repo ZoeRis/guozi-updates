@@ -1,6 +1,6 @@
 {
-  "version": "5.20-feeding-system",
-  "app_version": 49,
+  "version": "5.24-mute",
+  "app_version": 53,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -37,7 +37,7 @@
     "update.png"
   ],
   "app_api": 1,
-  "app_sha256": "5d2c7d1881981c027ea145471cb3321f2ba60e4cdf8f646a5c2f74f63f4d9ea3",
+  "app_sha256": "5bd2eb24a75caf3cfe9e8a1c8e980187e54ec12d96008127bcecadf87832a005",
   "launcher_version": 32,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958",

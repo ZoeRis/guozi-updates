@@ -67,7 +67,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 49
+APP_BUILD_VERSION = 53
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -773,6 +773,7 @@ class DesktopPet(QLabel):
         self.fullness_decay_seconds = 600
         self.fullness = 50
         self.fullness_updated_at = time.time()
+        self.muted = False
 
         # 每个音效只保留一个长期复用的 QSoundEffect。
         # QSoundEffect 本身就是给低延迟反馈音效使用的；
@@ -2342,6 +2343,7 @@ class DesktopPet(QLabel):
         now = time.time()
         fullness = self.initial_fullness
         updated_at = now
+        muted = False
 
         if PET_STATE_FILE.exists():
             try:
@@ -2364,6 +2366,12 @@ class DesktopPet(QLabel):
                             now,
                         )
                     )
+                    muted = bool(
+                        data.get(
+                            "muted",
+                            False,
+                        )
+                    )
             except (
                 OSError,
                 TypeError,
@@ -2382,6 +2390,7 @@ class DesktopPet(QLabel):
             if updated_at > 0
             else now
         )
+        self.muted = muted
 
         self.apply_fullness_decay(
             save=False
@@ -2401,6 +2410,9 @@ class DesktopPet(QLabel):
                         "updated_at": float(
                             self.fullness_updated_at
                         ),
+                        "muted": bool(
+                            self.muted
+                        ),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -2410,6 +2422,32 @@ class DesktopPet(QLabel):
             )
         except OSError:
             pass
+
+    def toggle_mute(self, checked=None):
+        """切换果子全部动作音效的静音状态。"""
+
+        if checked is None:
+            self.muted = not self.muted
+        else:
+            self.muted = bool(checked)
+
+        if self.muted:
+            # 已经正在播放的声音也立即停掉。
+            self.stop_action_sound()
+
+        self.save_pet_state()
+
+        if hasattr(
+            self,
+            "tray_mute_action",
+        ):
+            self.tray_mute_action.setChecked(
+                self.muted
+            )
+
+        debug_log(
+            f"mute changed muted={self.muted}"
+        )
 
     def apply_fullness_decay(
         self,
@@ -2477,6 +2515,26 @@ class DesktopPet(QLabel):
             f" / {self.max_fullness}"
         )
 
+    def use_digest_magic(self):
+        """瞬间清空饱食度，方便继续测试 / 喂食。"""
+
+        self.fullness = 0
+        self.fullness_updated_at = time.time()
+        self.save_pet_state()
+
+        if hasattr(
+            self,
+            "tray_foods_menu",
+        ):
+            self.refresh_tray_foods_menu()
+
+        self.say("消食魔法——！")
+
+        debug_log(
+            "digest magic used "
+            "fullness=0"
+        )
+
     def food_by_id(self, food_id):
         for food in self.foods:
             if food.get("id") == food_id:
@@ -2484,22 +2542,9 @@ class DesktopPet(QLabel):
         return None
 
     def can_feed_now(self):
-        """喂食不会打断启动、更新、拖拽或另一段完整动作。"""
+        """喂食菜单是否可以响应；在线更新不会阻止喂食。"""
 
-        if self.update_in_progress:
-            return False
-
-        if self.is_dragging:
-            return False
-
-        if self.state in (
-            "startup_hello",
-            "custom_action",
-            "dragging",
-        ):
-            return False
-
-        return True
+        return not self.is_dragging
 
     def food_reaction_frames(
         self,
@@ -2531,10 +2576,13 @@ class DesktopPet(QLabel):
     def start_feeding(self, food):
         """从菜单触发一次喂食。"""
 
-        if (
-            not isinstance(food, dict)
-            or not self.can_feed_now()
-        ):
+        if not isinstance(food, dict):
+            return
+
+        # 右键菜单本身就说明当前没有在拖拽。
+        # 喂食允许像手动线上动作一样接管 walking / custom_action；
+        # 在线更新若正在下载，会等喂食动作结束后再安全应用。
+        if self.is_dragging:
             return
 
         self.apply_fullness_decay()
@@ -2561,6 +2609,14 @@ class DesktopPet(QLabel):
 
         steps = [
             {
+                "type": "say",
+                "texts": list(
+                    current_food[
+                        "reaction_lines"
+                    ]
+                ),
+            },
+            {
                 "type": "frames",
                 "frames": list(
                     current_food["frames"]
@@ -2573,25 +2629,6 @@ class DesktopPet(QLabel):
                 "loops": int(
                     current_food["loops"]
                 ),
-                "playback": "loop",
-            },
-            {
-                "type": "say",
-                "texts": list(
-                    current_food[
-                        "reaction_lines"
-                    ]
-                ),
-            },
-            {
-                "type": "frames",
-                "frames": (
-                    self.food_reaction_frames(
-                        current_food
-                    )
-                ),
-                "frame_interval": 650,
-                "loops": 1,
                 "playback": "loop",
             },
             {
@@ -2664,6 +2701,15 @@ class DesktopPet(QLabel):
         )
         status_action.setEnabled(False)
         foods_menu.addAction(status_action)
+
+        magic_action = QAction(
+            "消食魔法 ✨",
+            foods_menu,
+        )
+        magic_action.triggered.connect(
+            self.use_digest_magic
+        )
+        foods_menu.addAction(magic_action)
         foods_menu.addSeparator()
 
         if not self.foods:
@@ -2677,14 +2723,12 @@ class DesktopPet(QLabel):
             )
             return
 
-        enabled = self.can_feed_now()
-
         for food in self.foods:
             food_action = QAction(
                 food["name"],
                 foods_menu,
             )
-            food_action.setEnabled(enabled)
+            food_action.setEnabled(True)
             food_action.triggered.connect(
                 lambda checked=False, data=food:
                 self.start_feeding(data)
@@ -6461,6 +6505,12 @@ class DesktopPet(QLabel):
             f"attempts={attempts_left}"
         )
 
+        if self.muted:
+            debug_log(
+                f"sound skipped muted file={filename!r}"
+            )
+            return True
+
         safe_name = (
             self.sanitize_action_sound_filename(
                 filename
@@ -9686,6 +9736,18 @@ class DesktopPet(QLabel):
             self.say_random_message
         )
 
+        self.tray_mute_action = QAction(
+            "静音果子",
+            self,
+        )
+        self.tray_mute_action.setCheckable(True)
+        self.tray_mute_action.setChecked(
+            self.muted
+        )
+        self.tray_mute_action.toggled.connect(
+            self.toggle_mute
+        )
+
         reload_action = QAction(
             "重新载入设置、台词、动作和食物",
             self,
@@ -9754,6 +9816,9 @@ class DesktopPet(QLabel):
             self.tray_sleep_action
         )
         self.tray_menu.addAction(speak_action)
+        self.tray_menu.addAction(
+            self.tray_mute_action
+        )
         self.tray_foods_menu = (
             self.tray_menu.addMenu("喂果子")
         )
@@ -10543,6 +10608,18 @@ class DesktopPet(QLabel):
             self.say_random_message
         )
 
+        mute_action = QAction(
+            "静音果子",
+            self,
+        )
+        mute_action.setCheckable(True)
+        mute_action.setChecked(
+            self.muted
+        )
+        mute_action.toggled.connect(
+            self.toggle_mute
+        )
+
         reload_action = QAction(
             "重新载入设置、台词、动作和食物",
             self,
@@ -10603,6 +10680,7 @@ class DesktopPet(QLabel):
         menu.addMenu(movement_menu)
         menu.addAction(sleep_action)
         menu.addAction(speak_action)
+        menu.addAction(mute_action)
         self.add_foods_to_menu(menu)
         self.add_actions_to_menu(menu)
         menu.addSeparator()
