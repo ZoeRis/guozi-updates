@@ -67,7 +67,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 54
+APP_BUILD_VERSION = 55
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -111,6 +111,10 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 VK_LBUTTON = 0x01
+
+LVM_FIRST = 0x1000
+LVM_GETNEXTITEM = LVM_FIRST + 12
+LVNI_SELECTED = 0x0002
 
 DESKTOP_WINDOW_CLASSES = {
     "Progman",
@@ -161,6 +165,16 @@ def configure_windows_mouse_api():
     ]
     user32.GetClassNameW.restype = (
         ctypes.c_int
+    )
+
+    user32.SendMessageW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    ]
+    user32.SendMessageW.restype = (
+        ctypes.c_ssize_t
     )
 
 
@@ -873,6 +887,8 @@ class DesktopPet(QLabel):
 
         self.summon_run_active = False
         self.global_left_was_down = False
+        self.global_pending_click_point = None
+        self.global_pending_click_native = None
         self.global_first_click_time = 0.0
         self.global_first_click_point = None
 
@@ -7676,6 +7692,65 @@ class DesktopPet(QLabel):
             else ""
         )
 
+    def desktop_list_view_at_point(
+        self,
+        native_point,
+    ):
+        """返回鼠标点所在桌面的 SysListView32；找不到则返回 0。"""
+
+        if sys.platform != "win32":
+            return 0
+
+        hwnd = ctypes.windll.user32.WindowFromPoint(
+            native_point
+        )
+
+        for _ in range(8):
+            if not hwnd:
+                break
+
+            if (
+                self.windows_class_name(hwnd)
+                == "SysListView32"
+            ):
+                return hwnd
+
+            hwnd = ctypes.windll.user32.GetParent(
+                hwnd
+            )
+
+        return 0
+
+    def desktop_has_selected_icon(
+        self,
+        native_point,
+    ):
+        """判断这次桌面点击后是否存在被选中的桌面图标。"""
+
+        if sys.platform != "win32":
+            return False
+
+        list_view = self.desktop_list_view_at_point(
+            native_point
+        )
+
+        if not list_view:
+            return False
+
+        try:
+            selected_index = (
+                ctypes.windll.user32.SendMessageW(
+                    list_view,
+                    LVM_GETNEXTITEM,
+                    wintypes.WPARAM(-1).value,
+                    LVNI_SELECTED,
+                )
+            )
+        except (AttributeError, OSError, TypeError, ValueError):
+            return False
+
+        return int(selected_index) >= 0
+
     def is_desktop_background_point(
         self,
         native_point,
@@ -7730,17 +7805,50 @@ class DesktopPet(QLabel):
             & 0x8000
         )
 
+        # 按下时只记坐标。真正判断放到松开以后，
+        # 让 Explorer 先完成“选中桌面图标 / 清除图标选择”。
         if is_down and not self.global_left_was_down:
             native_point = wintypes.POINT()
 
             if ctypes.windll.user32.GetCursorPos(
                 ctypes.byref(native_point)
             ):
-                qt_point = QCursor.pos()
-                self.record_global_click(
-                    qt_point,
-                    native_point,
+                self.global_pending_click_point = (
+                    QPoint(QCursor.pos())
                 )
+                self.global_pending_click_native = (
+                    (
+                        int(native_point.x),
+                        int(native_point.y),
+                    )
+                )
+
+        # 松开以后再记录这次点击。
+        if (
+            not is_down
+            and self.global_left_was_down
+            and self.global_pending_click_point
+            is not None
+            and self.global_pending_click_native
+            is not None
+        ):
+            native_x, native_y = (
+                self.global_pending_click_native
+            )
+            native_point = wintypes.POINT(
+                native_x,
+                native_y,
+            )
+
+            self.record_global_click(
+                QPoint(
+                    self.global_pending_click_point
+                ),
+                native_point,
+            )
+
+            self.global_pending_click_point = None
+            self.global_pending_click_native = None
 
         self.global_left_was_down = is_down
 
@@ -7771,6 +7879,21 @@ class DesktopPet(QLabel):
         if not self.is_desktop_background_point(
             native_point
         ):
+            self.global_first_click_point = None
+            self.global_first_click_time = 0.0
+            return
+
+        # Windows 桌面图标和真正的空白桌面都属于
+        # SysListView32；只看窗口类会把“双击文件”误认成
+        # “双击桌面空白”。鼠标松开后，如果 Explorer 中
+        # 有桌面图标处于选中状态，就不触发果子召唤。
+        if self.desktop_has_selected_icon(
+            native_point
+        ):
+            debug_log(
+                "desktop summon ignored: "
+                "desktop icon selected"
+            )
             self.global_first_click_point = None
             self.global_first_click_time = 0.0
             return
