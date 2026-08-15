@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 63
+APP_BUILD_VERSION = 64
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -3755,14 +3755,31 @@ class DesktopPet(QLabel):
                 continue
 
             for step in raw_steps[:60]:
-                if (
-                    isinstance(step, dict)
-                    and str(
-                        step.get("type", "")
-                    ).strip().lower()
-                    == "frames"
-                ):
-                    add_frames(step.get("frames", []))
+                if not isinstance(step, dict):
+                    continue
+
+                step_type = str(
+                    step.get("type", "")
+                ).strip().lower()
+
+                if step_type == "frames":
+                    add_frames(
+                        step.get("frames", [])
+                    )
+
+                elif step_type == "frames_mouse_side":
+                    add_frames(
+                        step.get(
+                            "left_frames",
+                            [],
+                        )
+                    )
+                    add_frames(
+                        step.get(
+                            "right_frames",
+                            [],
+                        )
+                    )
 
         if len(filenames) > 200:
             raise ValueError("动作图片数量过多。")
@@ -8097,7 +8114,10 @@ class DesktopPet(QLabel):
             step["duration"]
         )
 
-        if step_type == "move_away_mouse":
+        if step_type in (
+            "move_away_mouse",
+            "move_near_mouse",
+        ):
             target = self.custom_action_step_target
             start = self.custom_action_step_start
 
@@ -8116,10 +8136,15 @@ class DesktopPet(QLabel):
             )
 
             debug_log(
-                "escape run speed "
-                f"distance={actual_distance:.1f} "
-                f"duration_ms={duration_ms} "
-                f"run_step={self.run_step_speed():.1f}"
+                (
+                    "escape run speed "
+                    if step_type
+                    == "move_away_mouse"
+                    else "peek approach run speed "
+                )
+                + f"distance={actual_distance:.1f} "
+                + f"duration_ms={duration_ms} "
+                + f"run_step={self.run_step_speed():.1f}"
             )
 
         self.start_timed_custom_step(
@@ -8146,7 +8171,7 @@ class DesktopPet(QLabel):
         start,
         target,
     ):
-        """给逃跑类 custom motion 显示左右跑步贴图。"""
+        """给逃跑/跑向鼠标类 custom motion 显示左右跑步贴图。"""
 
         if target.x() < start.x():
             direction = -1
@@ -8248,7 +8273,10 @@ class DesktopPet(QLabel):
             )
             self.drag_custom_action_pause_started = None
 
-        if step_type == "frames":
+        if step_type in (
+            "frames",
+            "frames_mouse_side",
+        ):
             if (
                 self.custom_action_frame_index
                 >= len(
@@ -8285,7 +8313,10 @@ class DesktopPet(QLabel):
             start = self.custom_action_step_start
             target = self.custom_action_step_target
 
-            if step_type == "move_away_mouse":
+            if step_type in (
+                "move_away_mouse",
+                "move_near_mouse",
+            ):
                 self.show_custom_action_run_frame(
                     start,
                     target,
