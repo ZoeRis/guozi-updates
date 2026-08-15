@@ -1,5 +1,5 @@
 {
-  "version": 34,
+  "version": 35,
   "actions": [
     {
       "name": "开心摇摆",
@@ -192,22 +192,15 @@
           "type": "frames",
           "frames": [
             "yawn1.PNG",
-            "yawn2.PNG"
-          ],
-          "frame_interval": 180,
-          "loops": 3,
-          "playback": "loop"
-        },
-        {
-          "type": "frames",
-          "frames": [
+            "yawn2.PNG",
             "yawn3.PNG",
             "yawn4.PNG",
-            "yawn5.PNG",
-            "yawn6.PNG",
-            "yawn7.PNG"
+            "yawn3.PNG",
+            "yawn4.PNG",
+            "yawn2.PNG",
+            "yawn1.PNG"
           ],
-          "frame_interval": 130,
+          "frame_interval": 160,
           "loops": 1,
           "playback": "loop"
         }
@@ -231,6 +224,139 @@
           ],
           "frame_interval": 170,
           "loops": 5,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "发呆",
+      "triggers": [
+        "manual",
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 90,
+      "steps": [
+        {
+          "type": "frames",
+          "frames": [
+            "chilling1.PNG",
+            "chilling2.PNG"
+          ],
+          "frame_interval": 220,
+          "loops": 5,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "理毛",
+      "triggers": [
+        "manual",
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 110,
+      "steps": [
+        {
+          "type": "frames",
+          "frames": [
+            "fur1.PNG",
+            "fur2.PNG"
+          ],
+          "frame_interval": 180,
+          "loops": 5,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "打盹",
+      "triggers": [
+        "manual",
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 140,
+      "steps": [
+        {
+          "type": "frames",
+          "frames": [
+            "nap1.PNG",
+            "nap2.PNG"
+          ],
+          "frame_interval": 240,
+          "loops": 5,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "跑来偷看你在干嘛",
+      "triggers": [
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 90,
+      "steps": [
+        {
+          "type": "move_near_mouse",
+          "duration": 650,
+          "distance": 18,
+          "offset_y": 0,
+          "prefer_side": "auto"
+        },
+        {
+          "type": "frames_mouse_side",
+          "left_frames": [
+            "peekleft1.PNG",
+            "peekleft2.PNG"
+          ],
+          "right_frames": [
+            "peekright1.PNG",
+            "peekright2.PNG"
+          ],
+          "frame_interval": 170,
+          "loops": 4,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "伸懒腰",
+      "triggers": [
+        "manual",
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 120,
+      "steps": [
+        {
+          "type": "frames",
+          "frames": [
+            "stretch1.PNG",
+            "stretch2.PNG"
+          ],
+          "frame_interval": 200,
+          "loops": 3,
+          "playback": "loop"
+        },
+        {
+          "type": "frames",
+          "frames": [
+            "stretch3.PNG",
+            "stretch4.PNG",
+            "stretch5.PNG",
+            "stretch6.PNG",
+            "stretch7.PNG"
+          ],
+          "frame_interval": 140,
+          "loops": 1,
           "playback": "loop"
         }
       ]
