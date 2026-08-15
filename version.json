@@ -1,5 +1,5 @@
 {
-  "version": "5.28-desktop-item-hittest",
+  "version": "5.29-launcher-freshest-manifest",
   "app_version": 57,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
@@ -38,9 +38,9 @@
   ],
   "app_api": 1,
   "app_sha256": "e07414af74b2a2a3621ea5051b7d68b1c26edd590a140d4081b86d32ebbff2a4",
-  "launcher_version": 32,
+  "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
-  "launcher_sha256": "7f22b1ac3fc32506170da395b9ce27ba81189db782af31c11427df42f3e81958",
+  "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
   "asset_version": 1,
   "changed_images": [],

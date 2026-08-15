@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import runpy
 import shutil
 import sys
@@ -33,7 +34,7 @@ NETWORK_RETRY_DELAYS = (0.0, 0.55, 1.20)
 # 未来如果 app.py 需要新的启动器能力，
 # 先在线更新 launcher.py，再提高 manifest 里的 app_api。
 SUPPORTED_APP_API = 1
-LAUNCHER_BUILD_VERSION = 32
+LAUNCHER_BUILD_VERSION = 33
 
 
 def base_dir():
@@ -308,6 +309,36 @@ def write_state(app_version, app_sha256):
     temp_file.replace(STATE_FILE)
 
 
+def detect_local_app_version():
+    """从当前 app.py 源码里读取 APP_BUILD_VERSION；失败返回 0。"""
+
+    if not APP_FILE.exists():
+        return 0
+
+    try:
+        text = APP_FILE.read_text(
+            encoding="utf-8"
+        )
+    except (
+        OSError,
+        UnicodeDecodeError,
+    ):
+        return 0
+
+    match = re.search(
+        r"(?m)^APP_BUILD_VERSION\s*=\s*(\d+)\s*$",
+        text,
+    )
+
+    if match is None:
+        return 0
+
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return 0
+
+
 def validate_app_bytes(data):
     try:
         text = data.decode("utf-8")
@@ -325,37 +356,183 @@ def validate_app_bytes(data):
     return text
 
 
-def check_code_update():
-    """校验并更新 app.py；失败时保留本地可用版本。"""
-
-    previous_state = read_state()
-    previous_version = previous_state[
-        "app_version"
-    ]
+def parse_version_manifest(data):
+    """解析并做 launcher 需要的最小安全检查。"""
 
     try:
-        version_bytes = download_from_sources(
+        version_data = json.loads(
+            data.decode("utf-8")
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as error:
+        raise ValueError(
+            "version.json 无法解析。"
+        ) from error
+
+    if not isinstance(version_data, dict):
+        raise ValueError(
+            "version.json 格式错误。"
+        )
+
+    remote_version = int(
+        version_data.get(
+            "app_version",
+            0,
+        )
+    )
+    launcher_version = int(
+        version_data.get(
+            "launcher_version",
+            0,
+        )
+    )
+    required_api = int(
+        version_data.get(
+            "app_api",
+            1,
+        )
+    )
+
+    expected_hash = str(
+        version_data["app_sha256"]
+    ).lower().strip()
+
+    if len(expected_hash) != 64:
+        raise ValueError(
+            "app SHA256 格式错误。"
+        )
+
+    # 同时验证 app_url 仍然只指向受信任仓库的 app.py。
+    trusted_app_urls(
+        version_data["app_url"]
+    )
+
+    return (
+        version_data,
+        remote_version,
+        launcher_version,
+    )
+
+
+def download_best_version_manifest():
+    """同时尝试 Raw / CDN，多轮收集后选择 app_version 最高的一份。"""
+
+    candidates = []
+    last_error = None
+
+    for round_index in range(
+        NETWORK_DOWNLOAD_ROUNDS
+    ):
+        delay = NETWORK_RETRY_DELAYS[
+            min(
+                round_index,
+                len(NETWORK_RETRY_DELAYS) - 1,
+            )
+        ]
+
+        if delay > 0:
+            time.sleep(delay)
+
+        urls = list(
             cache_busted_urls(
                 VERSION_URLS
-            ),
-            MAX_VERSION_BYTES,
-        )
-
-        version_data = json.loads(
-            version_bytes.decode("utf-8")
-        )
-
-        if not isinstance(version_data, dict):
-            raise ValueError(
-                "version.json 格式错误。"
             )
+        )
+
+        # 轮流先碰 Raw / CDN，但不会“第一条成功就立刻相信”。
+        if round_index % 2 == 1:
+            urls.reverse()
+
+        for source_index, url in enumerate(urls):
+            try:
+                data = download_bytes(
+                    url,
+                    MAX_VERSION_BYTES,
+                )
+
+                (
+                    version_data,
+                    remote_version,
+                    launcher_version,
+                ) = parse_version_manifest(
+                    data
+                )
+
+                candidates.append(
+                    (
+                        remote_version,
+                        launcher_version,
+                        version_data,
+                    )
+                )
+
+            except (
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+            ) as error:
+                last_error = error
+
+    if not candidates:
+        if last_error is not None:
+            raise last_error
+
+        raise urllib.error.URLError(
+            "无法获得可用的 version.json。"
+        )
+
+    # app 版本优先；若 app_version 一样，则 launcher_version 更高者优先。
+    candidates.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+        ),
+        reverse=True,
+    )
+
+    return candidates[0][2]
+
+
+def check_code_update():
+    """校验并更新 app.py；选择最新 manifest，并绝不自动降级。"""
+
+    previous_state = read_state()
+    state_version = int(
+        previous_state.get(
+            "app_version",
+            0,
+        )
+    )
+    detected_version = (
+        detect_local_app_version()
+    )
+    local_version = max(
+        state_version,
+        detected_version,
+    )
+
+    try:
+        version_data = (
+            download_best_version_manifest()
+        )
 
         remote_version = int(
-            version_data.get("app_version", 0)
+            version_data.get(
+                "app_version",
+                0,
+            )
         )
 
         required_api = int(
-            version_data.get("app_api", 1)
+            version_data.get(
+                "app_api",
+                1,
+            )
         )
 
         if required_api > SUPPORTED_APP_API:
@@ -371,24 +548,50 @@ def check_code_update():
             version_data["app_url"]
         )
 
-        local_hash = current_file_hash(APP_FILE)
+        local_hash = current_file_hash(
+            APP_FILE
+        )
 
-        # 同版本甚至更高版本时，也必须确认本地文件 hash 正确。
-        # 这样 app.py 被误改、写坏或半截覆盖时可自动修复。
+        # 关键保护：任何旧缓存 / 旧 CDN manifest 都不能把
+        # 已经更高版本的 app.py 自动降级。
+        if remote_version < local_version:
+            print(
+                "检测到较旧的线上版本，"
+                "保留本地 app：",
+                f"local={local_version}, "
+                f"remote={remote_version}",
+            )
+
+            # state 如果只是落后于 app.py 自身版本，顺手纠正。
+            if (
+                detected_version > state_version
+                and local_hash is not None
+            ):
+                write_state(
+                    detected_version,
+                    local_hash,
+                )
+
+            return (
+                False,
+                previous_state,
+            )
+
+        # 同版本：文件 hash 正确就不下载。
         if (
             APP_FILE.exists()
-            and remote_version <= previous_version
+            and remote_version == local_version
             and local_hash == expected_hash
         ):
             if (
-                previous_state.get("app_sha256")
+                state_version != remote_version
+                or previous_state.get(
+                    "app_sha256"
+                )
                 != expected_hash
             ):
                 write_state(
-                    max(
-                        previous_version,
-                        remote_version,
-                    ),
+                    remote_version,
                     expected_hash,
                 )
 
@@ -397,24 +600,39 @@ def check_code_update():
                 previous_state,
             )
 
-        app_bytes = download_verified_from_sources(
-            app_urls,
-            MAX_APP_BYTES,
-            expected_hash,
-            validate_app_bytes,
+        # remote_version > local_version：
+        # 正常升级。
+        #
+        # remote_version == local_version 但 hash 不同：
+        # 视为本地 app.py 被改坏/写坏，重新下载同版本修复。
+        app_bytes = (
+            download_verified_from_sources(
+                app_urls,
+                MAX_APP_BYTES,
+                expected_hash,
+                validate_app_bytes,
+            )
         )
 
-        APP_NEW_FILE.write_bytes(app_bytes)
+        APP_NEW_FILE.write_bytes(
+            app_bytes
+        )
 
-        # 再校验一次实际落盘内容。
-        written_bytes = APP_NEW_FILE.read_bytes()
+        written_bytes = (
+            APP_NEW_FILE.read_bytes()
+        )
 
-        if sha256_bytes(written_bytes) != expected_hash:
+        if (
+            sha256_bytes(written_bytes)
+            != expected_hash
+        ):
             raise ValueError(
                 "app.py 写入磁盘后校验失败。"
             )
 
-        validate_app_bytes(written_bytes)
+        validate_app_bytes(
+            written_bytes
+        )
 
         if APP_FILE.exists():
             shutil.copy2(
@@ -422,7 +640,9 @@ def check_code_update():
                 APP_BACKUP_FILE,
             )
 
-        APP_NEW_FILE.replace(APP_FILE)
+        APP_NEW_FILE.replace(
+            APP_FILE
+        )
 
         write_state(
             remote_version,
