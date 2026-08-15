@@ -1,6 +1,6 @@
 {
-  "version": "5.32-stroking-system",
-  "app_version": 60,
+  "version": "5.33-inertia-landing-sync",
+  "app_version": 61,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -40,16 +40,12 @@
     "strokeright.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "209bfc63b5fc1ed61792628e536e963ff6c327cd0e75bfb9cce16ab2abb507ec",
+  "app_sha256": "de98df28768dae65a2dde0fca05411d62df14216419f32894714fdcf2fda44af",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
   "asset_version": 2,
-  "changed_images": [
-    "strokeleft.PNG",
-    "strokemiddle.PNG",
-    "strokeright.PNG"
-  ],
+  "changed_images": [],
   "changed_sounds": []
 }

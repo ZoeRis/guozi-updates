@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 60
+APP_BUILD_VERSION = 61
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -912,6 +912,10 @@ class DesktopPet(QLabel):
         # 松开拖动后的轻微回弹
         self.bounce_frame_index = 0
         self.bounce_base_position = None
+
+        # 快速甩动时，落地回弹会与惯性滑行同时进行，
+        # 不再等滑完后才突然原地跳。
+        self.inertia_bounce_started_at = None
         # 松手落地：第一帧立即保持一点离地感，
         # 随后快速落下，再做一次很小的二次回弹。
         self.bounce_offsets = [
@@ -10101,11 +10105,16 @@ class DesktopPet(QLabel):
 
     # ---------- 松手回弹 ----------
 
-    def start_drag_release_landing(self):
-        """拖动松手后的即时落地反馈。"""
+    def play_drag_release_feedback(self):
+        """松手瞬间的落地声音和台词。"""
 
         self.play_action_sound("drop.wav")
         self.say("嘿咻！")
+
+    def start_drag_release_landing(self):
+        """没有惯性时的即时落地反馈。"""
+
+        self.play_drag_release_feedback()
         self.start_release_bounce()
 
     def start_release_bounce(self):
@@ -10849,13 +10858,21 @@ class DesktopPet(QLabel):
         self.inertia_float_x = float(self.x())
         self.inertia_float_y = float(self.y())
         self.inertia_last_tick = time.monotonic()
+        self.inertia_bounce_started_at = (
+            self.inertia_last_tick
+        )
 
         self.state = "inertial"
         self.setPixmap(self.normal)
 
+        # 重量感发生在“松手”这一刻：
+        # 声音 / 台词立刻出现，小回弹与惯性滑行同步进行。
+        self.play_drag_release_feedback()
+
         debug_log(
             "drag inertia start "
-            f"speed={speed:.1f}px/s"
+            f"speed={speed:.1f}px/s "
+            "landing_feedback=immediate"
         )
 
         self.drag_inertia_timer.start()
@@ -10897,31 +10914,71 @@ class DesktopPet(QLabel):
             self.inertia_float_y
         )
 
-        safe_x, safe_y = self.safe_coordinates(
+        # 先对“惯性基准位置”做屏幕边界约束。
+        # 回弹只是视觉上的短暂 y 偏移，不参与速度碰撞判断，
+        # 否则靠近屏幕边缘时会错误地把惯性速度清零。
+        base_x, base_y = self.safe_coordinates(
             requested_x,
             requested_y,
         )
 
-        self.move(
-            safe_x,
-            safe_y,
-        )
-
-        if safe_x != requested_x:
+        if base_x != requested_x:
             self.inertia_velocity_x = 0.0
-            self.inertia_float_x = float(safe_x)
+            self.inertia_float_x = float(base_x)
         else:
             self.inertia_float_x = float(
-                safe_x
+                base_x
             )
 
-        if safe_y != requested_y:
+        if base_y != requested_y:
             self.inertia_velocity_y = 0.0
-            self.inertia_float_y = float(safe_y)
+            self.inertia_float_y = float(base_y)
         else:
             self.inertia_float_y = float(
-                safe_y
+                base_y
             )
+
+        bounce_offset_y = 0
+
+        if self.inertia_bounce_started_at is not None:
+            bounce_elapsed = (
+                now - self.inertia_bounce_started_at
+            )
+            bounce_step_seconds = (
+                self.bounce_timer.interval()
+                / 1000.0
+            )
+
+            if bounce_step_seconds <= 0:
+                bounce_step_seconds = 0.045
+
+            bounce_index = int(
+                bounce_elapsed
+                / bounce_step_seconds
+            )
+
+            if (
+                0
+                <= bounce_index
+                < len(self.bounce_offsets)
+            ):
+                bounce_offset_y = (
+                    self.bounce_offsets[
+                        bounce_index
+                    ]
+                )
+            else:
+                self.inertia_bounce_started_at = None
+
+        visual_x, visual_y = self.safe_coordinates(
+            base_x,
+            base_y + bounce_offset_y,
+        )
+
+        self.move(
+            visual_x,
+            visual_y,
+        )
 
         decay = (
             DRAG_INERTIA_FRICTION_16MS
@@ -11004,29 +11061,49 @@ class DesktopPet(QLabel):
         return True
 
     def finish_drag_inertia(self):
-        """惯性停下后，在最终位置执行原本的落地动作。"""
+        """惯性停下后直接恢复普通状态，不再追加第二次落地回弹。"""
 
         if self.state != "inertial":
             return
 
         self.drag_inertia_timer.stop()
+
+        # 如果停下时恰好还处在回弹的非零视觉偏移，
+        # 先回到惯性计算的真实基准位置。
+        final_x, final_y = self.safe_coordinates(
+            round(self.inertia_float_x),
+            round(self.inertia_float_y),
+        )
+        self.move(
+            final_x,
+            final_y,
+        )
+
         self.inertia_velocity_x = 0.0
         self.inertia_velocity_y = 0.0
         self.inertia_last_tick = None
+        self.inertia_bounce_started_at = None
 
         self.state = "normal"
         self.setPixmap(self.normal)
 
         debug_log(
             "drag inertia finish "
-            f"position=({self.x()},{self.y()})"
+            f"position=({self.x()},{self.y()}) "
+            "second_landing_bounce=skipped"
         )
 
         if self.try_start_manual_edge_crawl():
             self.try_apply_pending_online_update()
             return
 
-        self.start_drag_release_landing()
+        self.save_position()
+        self.schedule_blink()
+        self.schedule_auto_speech()
+        self.schedule_sleep()
+
+        if not self.walking_paused:
+            self.schedule_walk()
 
         self.try_apply_pending_online_update()
 
@@ -11045,6 +11122,7 @@ class DesktopPet(QLabel):
         self.inertia_velocity_x = 0.0
         self.inertia_velocity_y = 0.0
         self.inertia_last_tick = None
+        self.inertia_bounce_started_at = None
 
         if self.state == "inertial":
             self.state = "normal"
