@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 58
+APP_BUILD_VERSION = 59
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -117,11 +117,9 @@ LVM_FIRST = 0x1000
 LVM_GETNEXTITEM = LVM_FIRST + 12
 LVNI_SELECTED = 0x0002
 
-DESKTOP_WINDOW_CLASSES = {
+DESKTOP_ROOT_WINDOW_CLASSES = {
     "Progman",
     "WorkerW",
-    "SHELLDLL_DefView",
-    "SysListView32",
 }
 
 
@@ -8075,16 +8073,21 @@ class DesktopPet(QLabel):
         self,
         native_point,
     ):
-        """返回鼠标点所在桌面的 SysListView32；找不到则返回 0。"""
+        """返回真正桌面上的 SysListView32；普通 Explorer 不算。"""
 
         if sys.platform != "win32":
+            return 0
+
+        if not self.is_desktop_background_point(
+            native_point
+        ):
             return 0
 
         hwnd = ctypes.windll.user32.WindowFromPoint(
             native_point
         )
 
-        for _ in range(8):
+        for _ in range(12):
             if not hwnd:
                 break
 
@@ -8134,7 +8137,7 @@ class DesktopPet(QLabel):
         self,
         native_point,
     ):
-        """判断原生鼠标坐标是否属于 Windows 桌面区域。"""
+        """只把真正的 Windows 桌面算作召唤区域。"""
 
         if sys.platform != "win32":
             return False
@@ -8143,15 +8146,24 @@ class DesktopPet(QLabel):
             native_point
         )
 
-        # 沿父窗口向上查找；桌面在不同 Windows
-        # 版本里可能由这些不同窗口类承载。
-        for _ in range(8):
+        # Explorer 文件夹窗口内部也可能出现
+        # SysListView32 / SHELLDLL_DefView，所以仅看这些子窗口类
+        # 会误把“文件夹里的小文件夹”当成桌面。
+        #
+        # 真正的桌面窗口链最终会到 WorkerW 或 Progman；
+        # 普通资源管理器窗口则会停在 CabinetWClass 等窗口，
+        # 不会进入这两个桌面根窗口。
+        for _ in range(12):
             if not hwnd:
                 break
 
+            class_name = self.windows_class_name(
+                hwnd
+            )
+
             if (
-                self.windows_class_name(hwnd)
-                in DESKTOP_WINDOW_CLASSES
+                class_name
+                in DESKTOP_ROOT_WINDOW_CLASSES
             ):
                 return True
 
