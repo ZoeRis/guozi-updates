@@ -1,6 +1,6 @@
 {
-  "version": "5.29-launcher-freshest-manifest",
-  "app_version": 57,
+  "version": "5.30-safe-desktop-doubleclick",
+  "app_version": 58,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -37,7 +37,7 @@
     "update.png"
   ],
   "app_api": 1,
-  "app_sha256": "e07414af74b2a2a3621ea5051b7d68b1c26edd590a140d4081b86d32ebbff2a4",
+  "app_sha256": "aad2a9ffc185c4265af66576275e0f6566c9eee227a1d6d610bbcb70745ad52a",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
