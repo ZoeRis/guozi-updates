@@ -63,11 +63,12 @@ ACTIONS_FILE = APP_DIR / "actions.json"
 GREETINGS_FILE = APP_DIR / "greetings.json"
 FOODS_FILE = APP_DIR / "foods.json"
 PET_STATE_FILE = APP_DIR / "pet_state.json"
+RESOURCE_STATE_FILE = APP_DIR / "resource_state.json"
 ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 55
+APP_BUILD_VERSION = 56
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -3876,8 +3877,134 @@ class DesktopPet(QLabel):
         actions_temp.replace(ACTIONS_FILE)
         greetings_temp.replace(GREETINGS_FILE)
 
+    def read_resource_state(self):
+        """读取本机已经完整安装的图片/音效资源版本。"""
+
+        if not RESOURCE_STATE_FILE.exists():
+            return {}
+
+        try:
+            data = json.loads(
+                RESOURCE_STATE_FILE.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            if not isinstance(data, dict):
+                return {}
+
+            return data
+
+        except (
+            OSError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):
+            return {}
+
+    def existing_image_source(self, filename):
+        """寻找当前已经可用的图片；线上缓存优先，其次程序自带图片。"""
+
+        safe_name = self.sanitize_action_filename(
+            filename
+        )
+
+        if safe_name is None:
+            return None
+
+        candidates = (
+            ONLINE_IMAGE_DIR / safe_name,
+            IMAGE_DIR / safe_name,
+        )
+
+        for path in candidates:
+            try:
+                if path.is_file() and path.stat().st_size > 0:
+                    return path
+            except OSError:
+                continue
+
+        return None
+
+    def existing_sound_source(self, filename):
+        """寻找当前已经可用的 WAV；线上缓存优先，其次程序自带音效。"""
+
+        safe_name = (
+            self.sanitize_action_sound_filename(
+                filename
+            )
+        )
+
+        if safe_name is None:
+            return None
+
+        candidates = (
+            ONLINE_SOUND_DIR / safe_name,
+            SOUND_DIR / safe_name,
+        )
+
+        for path in candidates:
+            try:
+                if path.is_file() and path.stat().st_size > 0:
+                    return path
+            except OSError:
+                continue
+
+        return None
+
+    def changed_asset_names_from_version(
+        self,
+        version_data,
+        key,
+        sound=False,
+    ):
+        """读取本次资源版本里明确发生内容变化的同名资源。"""
+
+        raw_names = version_data.get(key, [])
+
+        if raw_names is None:
+            raw_names = []
+
+        if not isinstance(raw_names, list):
+            raise ValueError(
+                f"{key} 必须是列表。"
+            )
+
+        names = []
+
+        for raw_name in raw_names[:300]:
+            if not isinstance(raw_name, str):
+                raise ValueError(
+                    f"{key} 包含无效文件名。"
+                )
+
+            filename = raw_name.strip()
+
+            if sound:
+                safe_name = (
+                    self.sanitize_action_sound_filename(
+                        filename
+                    )
+                )
+            else:
+                safe_name = (
+                    self.sanitize_action_filename(
+                        filename
+                    )
+                )
+
+            if safe_name is None:
+                raise ValueError(
+                    f"{key} 包含不安全文件名。"
+                )
+
+            if safe_name not in names:
+                names.append(safe_name)
+
+        return names
+
     def fetch_online_update_package(self):
-        """后台线程下载在线内容；不触碰 Qt 界面或现有音效播放器。"""
+        """后台线程下载在线内容；图片/音效只下载真正需要的文件。"""
 
         try:
             used_backup = False
@@ -3915,6 +4042,24 @@ class DesktopPet(QLabel):
             ):
                 remote_app_version = APP_BUILD_VERSION
 
+            try:
+                remote_asset_version = int(
+                    version_data.get(
+                        "asset_version",
+                        0,
+                    )
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                remote_asset_version = 0
+
+            remote_asset_version = max(
+                0,
+                remote_asset_version,
+            )
+
             messages_urls = self.trusted_file_candidates(
                 version_data["messages_url"]
             )
@@ -3935,6 +4080,8 @@ class DesktopPet(QLabel):
                 )
             )
 
+            # 这几个都是很小的文本配置，仍然每次读取，
+            # 这样新台词 / 新动作 / 新食物可以立刻生效。
             messages_text, messages_source = (
                 self.download_text_from_sources(
                     messages_urls,
@@ -4003,9 +4150,97 @@ class DesktopPet(QLabel):
                 )
             )
 
-            image_data = {}
+            changed_images = (
+                self.changed_asset_names_from_version(
+                    version_data,
+                    "changed_images",
+                    sound=False,
+                )
+            )
+            changed_sounds = (
+                self.changed_asset_names_from_version(
+                    version_data,
+                    "changed_sounds",
+                    sound=True,
+                )
+            )
+
+            local_resource_state = (
+                self.read_resource_state()
+            )
+
+            try:
+                local_asset_version = int(
+                    local_resource_state.get(
+                        "asset_version",
+                        -1,
+                    )
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                local_asset_version = -1
+
+            asset_version_matches = (
+                local_asset_version
+                == remote_asset_version
+            )
+
+            # 缺失文件无论版本号是否一致都自动补齐。
+            # 只有 asset_version 发生变化时，changed_* 里的同名文件
+            # 才需要重新下载。其它已经存在的资源直接复用本地文件。
+            images_to_download = []
 
             for filename in image_filenames:
+                missing = (
+                    self.existing_image_source(
+                        filename
+                    )
+                    is None
+                )
+                explicitly_changed = (
+                    not asset_version_matches
+                    and filename in changed_images
+                )
+
+                if missing or explicitly_changed:
+                    images_to_download.append(
+                        filename
+                    )
+
+            sounds_to_download = []
+
+            for filename in sound_filenames:
+                missing = (
+                    self.existing_sound_source(
+                        filename
+                    )
+                    is None
+                )
+                explicitly_changed = (
+                    not asset_version_matches
+                    and filename in changed_sounds
+                )
+
+                if missing or explicitly_changed:
+                    sounds_to_download.append(
+                        filename
+                    )
+
+            debug_log(
+                "asset plan "
+                f"local={local_asset_version} "
+                f"remote={remote_asset_version} "
+                f"images={len(images_to_download)}/"
+                f"{len(image_filenames)} "
+                f"sounds={len(sounds_to_download)}/"
+                f"{len(sound_filenames)}"
+            )
+
+            image_data = {}
+
+            for filename in images_to_download:
                 encoded_name = urllib.parse.quote(
                     filename,
                     safe="",
@@ -4035,7 +4270,7 @@ class DesktopPet(QLabel):
 
             sound_data = {}
 
-            for filename in sound_filenames:
+            for filename in sounds_to_download:
                 encoded_name = urllib.parse.quote(
                     filename,
                     safe="",
@@ -4059,7 +4294,9 @@ class DesktopPet(QLabel):
                 )
 
                 if len(data) > MAX_ACTION_SOUND_BYTES:
-                    raise ValueError("动作音效文件过大。")
+                    raise ValueError(
+                        "动作音效文件过大。"
+                    )
 
                 if source_index == 1:
                     used_backup = True
@@ -4070,6 +4307,10 @@ class DesktopPet(QLabel):
                 {
                     "version": version,
                     "app_version": remote_app_version,
+                    "asset_version": remote_asset_version,
+                    "previous_asset_version": (
+                        local_asset_version
+                    ),
                     "messages_text": messages_text,
                     "settings_text": settings_text,
                     "actions_text": actions_text,
@@ -4079,6 +4320,12 @@ class DesktopPet(QLabel):
                     "sound_filenames": sound_filenames,
                     "image_data": image_data,
                     "sound_data": sound_data,
+                    "downloaded_image_count": len(
+                        image_data
+                    ),
+                    "downloaded_sound_count": len(
+                        sound_data
+                    ),
                     "used_backup": used_backup,
                 }
             )
@@ -4108,6 +4355,7 @@ class DesktopPet(QLabel):
             "actions.json": ACTIONS_FILE,
             "greetings.json": GREETINGS_FILE,
             "foods.json": FOODS_FILE,
+            "resource_state.json": RESOURCE_STATE_FILE,
             "online_images": ONLINE_IMAGE_DIR,
             "online_sounds": ONLINE_SOUND_DIR,
         }
@@ -4409,7 +4657,7 @@ class DesktopPet(QLabel):
         self,
         package,
     ):
-        """把完整的新资源先验证并写入独立 staging 目录。"""
+        """验证更新；未重新下载的资源直接复用本机现有文件。"""
 
         self.remove_update_path(
             UPDATE_STAGE_DIR
@@ -4449,64 +4697,135 @@ class DesktopPet(QLabel):
                 encoding="utf-8",
             )
 
-        image_count = 0
+        expected_images = []
 
-        for filename, data in (
-            package["image_data"].items()
-        ):
+        for raw_name in package[
+            "image_filenames"
+        ]:
             safe_name = (
                 self.sanitize_action_filename(
-                    filename
+                    raw_name
                 )
             )
 
             if safe_name is None:
                 raise ValueError(
-                    "图片文件名不安全。"
+                    "线上图片清单包含不安全文件名。"
+                )
+
+            if safe_name not in expected_images:
+                expected_images.append(
+                    safe_name
+                )
+
+        expected_sounds = []
+
+        for raw_name in package[
+            "sound_filenames"
+        ]:
+            safe_name = (
+                self.sanitize_action_sound_filename(
+                    raw_name
+                )
+            )
+
+            if safe_name is None:
+                raise ValueError(
+                    "线上音效清单包含不安全文件名。"
+                )
+
+            if safe_name not in expected_sounds:
+                expected_sounds.append(
+                    safe_name
+                )
+
+        # ---------- 图片 ----------
+        for filename in expected_images:
+            staged_path = (
+                stage_images / filename
+            )
+
+            if filename in package["image_data"]:
+                data = package[
+                    "image_data"
+                ][filename]
+                staged_path.write_bytes(data)
+            else:
+                source_path = (
+                    self.existing_image_source(
+                        filename
+                    )
+                )
+
+                if source_path is None:
+                    raise ValueError(
+                        f"本地缺少图片且未下载："
+                        f"{filename}"
+                    )
+
+                shutil.copy2(
+                    source_path,
+                    staged_path,
                 )
 
             pixmap = QPixmap()
-            pixmap.loadFromData(data)
+            pixmap.load(
+                str(staged_path)
+            )
 
             if pixmap.isNull():
                 raise ValueError(
-                    f"图片无法读取：{safe_name}"
+                    f"图片无法读取：{filename}"
                 )
 
-            (
-                stage_images / safe_name
-            ).write_bytes(data)
-            image_count += 1
-
+        # ---------- 音效 ----------
         changed_sound_count = 0
 
-        for filename, data in (
-            package["sound_data"].items()
-        ):
-            safe_name = (
-                self.sanitize_action_sound_filename(
-                    filename
-                )
+        for filename in expected_sounds:
+            staged_path = (
+                stage_sounds / filename
             )
 
-            if safe_name is None:
-                raise ValueError(
-                    "动作音效文件名不安全。"
-                )
-
-            if len(data) > MAX_ACTION_SOUND_BYTES:
-                raise ValueError(
-                    "动作音效文件过大。"
-                )
-
-            staged_sound = (
-                stage_sounds / safe_name
+            downloaded = (
+                filename
+                in package["sound_data"]
             )
-            staged_sound.write_bytes(data)
+
+            if downloaded:
+                data = package[
+                    "sound_data"
+                ][filename]
+
+                if (
+                    len(data)
+                    > MAX_ACTION_SOUND_BYTES
+                ):
+                    raise ValueError(
+                        "动作音效文件过大。"
+                    )
+
+                staged_path.write_bytes(data)
+            else:
+                source_path = (
+                    self.existing_sound_source(
+                        filename
+                    )
+                )
+
+                if source_path is None:
+                    raise ValueError(
+                        f"本地缺少音效且未下载："
+                        f"{filename}"
+                    )
+
+                shutil.copy2(
+                    source_path,
+                    staged_path,
+                )
 
             try:
                 with wave.open(
-                    str(staged_sound),
+                    str(staged_path),
                     "rb",
                 ) as wav_file:
                     if (
@@ -4527,50 +4846,27 @@ class DesktopPet(QLabel):
             ) as error:
                 raise ValueError(
                     f"动作音效无法读取："
-                    f"{safe_name}"
+                    f"{filename}"
                 ) from error
 
-            current_sound = (
-                ONLINE_SOUND_DIR
-                / safe_name
-            )
-
-            try:
-                unchanged = (
-                    current_sound.exists()
-                    and current_sound.read_bytes()
-                    == data
+            if downloaded:
+                current_sound = (
+                    self.existing_sound_source(
+                        filename
+                    )
                 )
-            except OSError:
-                unchanged = False
 
-            if not unchanged:
-                changed_sound_count += 1
+                try:
+                    changed = (
+                        current_sound is None
+                        or current_sound.read_bytes()
+                        != staged_path.read_bytes()
+                    )
+                except OSError:
+                    changed = True
 
-        expected_images = {
-            self.sanitize_action_filename(
-                name
-            )
-            for name in package[
-                "image_filenames"
-            ]
-        }
-        expected_sounds = {
-            self.sanitize_action_sound_filename(
-                name
-            )
-            for name in package[
-                "sound_filenames"
-            ]
-        }
-
-        if (
-            None in expected_images
-            or None in expected_sounds
-        ):
-            raise ValueError(
-                "线上资源清单包含不安全文件名。"
-            )
+                if changed:
+                    changed_sound_count += 1
 
         staged_images = {
             path.name
@@ -4583,12 +4879,16 @@ class DesktopPet(QLabel):
             if path.is_file()
         }
 
-        if staged_images != expected_images:
+        if staged_images != set(
+            expected_images
+        ):
             raise ValueError(
                 "图片 staging 清单不完整。"
             )
 
-        if staged_sounds != expected_sounds:
+        if staged_sounds != set(
+            expected_sounds
+        ):
             raise ValueError(
                 "音效 staging 清单不完整。"
             )
@@ -4611,16 +4911,79 @@ class DesktopPet(QLabel):
                 if path.is_file()
             }
 
+        asset_version = int(
+            package.get(
+                "asset_version",
+                0,
+            )
+        )
+
+        (
+            UPDATE_STAGE_DIR
+            / "resource_state.json"
+        ).write_text(
+            json.dumps(
+                {
+                    "asset_version": (
+                        asset_version
+                    ),
+                    "image_filenames": (
+                        expected_images
+                    ),
+                    "sound_filenames": (
+                        expected_sounds
+                    ),
+                    "updated_at": (
+                        datetime.now().isoformat()
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
         return {
-            "image_count": image_count,
-            "sound_count": changed_sound_count,
+            "image_count": int(
+                package.get(
+                    "downloaded_image_count",
+                    len(
+                        package.get(
+                            "image_data",
+                            {},
+                        )
+                    ),
+                )
+            ),
+            "sound_count": (
+                changed_sound_count
+            ),
+            "downloaded_sound_count": int(
+                package.get(
+                    "downloaded_sound_count",
+                    len(
+                        package.get(
+                            "sound_data",
+                            {},
+                        )
+                    ),
+                )
+            ),
+            "asset_version": asset_version,
+            "previous_asset_version": int(
+                package.get(
+                    "previous_asset_version",
+                    -1,
+                )
+            ),
             "deleted_images": len(
                 old_images
-                - expected_images
+                - set(expected_images)
             ),
             "deleted_sounds": len(
                 old_sounds
-                - expected_sounds
+                - set(expected_sounds)
             ),
         }
 
@@ -4941,6 +5304,23 @@ class DesktopPet(QLabel):
                     f"{stats['deleted_sounds']} 个旧音效"
                 )
 
+            if (
+                stats["image_count"] == 0
+                and stats[
+                    "downloaded_sound_count"
+                ] == 0
+            ):
+                asset_text = (
+                    "，图片和音效均已是最新版，"
+                    "无需重新下载"
+                )
+            else:
+                asset_text = (
+                    f"，下载了 "
+                    f"{stats['image_count']} 张图片、"
+                    f"{stats['downloaded_sound_count']} 个音效"
+                )
+
             remote_app_version = int(
                 package.get(
                     "app_version",
@@ -4965,9 +5345,8 @@ class DesktopPet(QLabel):
                     f"版本 {package['version']}，"
                     f"共 {len(self.messages)} 句台词，"
                     f"{greeting_count} 句问候，"
-                    f"{len(self.actions)} 个动作，"
-                    f"已同步 {stats['image_count']} 张图片，"
-                    f"更新了 {stats['sound_count']} 个音效"
+                    f"{len(self.actions)} 个动作"
+                    f"{asset_text}"
                     f"{cleanup_text}"
                     f"{route_text}。"
                 )
