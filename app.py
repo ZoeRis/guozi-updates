@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 59
+APP_BUILD_VERSION = 60
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -225,6 +225,15 @@ DRAG_INERTIA_MAX_SPEED = 2400.0
 DRAG_INERTIA_STOP_SPEED = 70.0
 DRAG_INERTIA_FRICTION_16MS = 0.80
 DRAG_INERTIA_TIMER_MS = 16
+
+# ---------- 抚摸 ----------
+# 只有从果子上半部开始、以横向小幅移动为主时才进入抚摸。
+STROKE_START_HORIZONTAL_PX = 4
+STROKE_MAX_START_VERTICAL_PX = 12
+STROKE_HEAD_TOP_RATIO = 0.02
+STROKE_HEAD_BOTTOM_RATIO = 0.62
+STROKE_HEAD_LEFT_RATIO = 0.06
+STROKE_HEAD_RIGHT_RATIO = 0.94
 
 
 DEFAULT_SETTINGS = {
@@ -848,6 +857,12 @@ class DesktopPet(QLabel):
         self.drag_custom_action_pause_started = None
         self.ignore_next_left_release = False
         self.click_woke_from_sleep = False
+
+        # 抚摸：按下后先等待判断；横向轻扫头部进入 stroking，
+        # 其它明显位移继续走原来的拖动逻辑。
+        self.stroke_candidate = False
+        self.is_stroking = False
+        self.stroke_frame_name = None
 
         # 拖拽速度采样 / 松手惯性
         self.drag_motion_samples = []
@@ -2909,6 +2924,27 @@ class DesktopPet(QLabel):
             self.load_image("drag1.PNG"),
             self.load_image("drag2.PNG"),
         ]
+
+        # 抚摸图是在线新增资源，所以先按 optional 读取。
+        # app.py 先升级、图片稍后同步时也能正常启动。
+        stroke_left = self.load_optional_image(
+            "strokeleft.PNG"
+        )
+        stroke_middle = self.load_optional_image(
+            "strokemiddle.PNG"
+        )
+        stroke_right = self.load_optional_image(
+            "strokeright.PNG"
+        )
+
+        self.stroke_frames = {
+            "left": stroke_left,
+            "middle": stroke_middle,
+            "right": stroke_right,
+        }
+        self.stroke_images_ready = all(
+            self.stroke_frames.values()
+        )
 
     def apply_timer_settings(self):
         self.sleep_animation_timer.setInterval(
@@ -9716,6 +9752,172 @@ class DesktopPet(QLabel):
                 not is_horizontal
             )
 
+    # ---------- 抚摸 ----------
+
+    def point_is_in_stroke_head_area(
+        self,
+        global_point,
+    ):
+        """判断鼠标是否从果子上半部开始抚摸。"""
+
+        if self.width() <= 0 or self.height() <= 0:
+            return False
+
+        local_x = (
+            global_point.x() - self.x()
+        )
+        local_y = (
+            global_point.y() - self.y()
+        )
+
+        x_ratio = (
+            local_x / self.width()
+        )
+        y_ratio = (
+            local_y / self.height()
+        )
+
+        return (
+            STROKE_HEAD_LEFT_RATIO
+            <= x_ratio
+            <= STROKE_HEAD_RIGHT_RATIO
+            and STROKE_HEAD_TOP_RATIO
+            <= y_ratio
+            <= STROKE_HEAD_BOTTOM_RATIO
+        )
+
+    def stroke_can_start(self):
+        """只在普通/走路状态允许开始抚摸。"""
+
+        return (
+            self.stroke_images_ready
+            and not self.is_dragging
+            and self.state in (
+                "normal",
+                "walking",
+            )
+        )
+
+    def begin_stroking(
+        self,
+        cursor_position,
+    ):
+        """进入抚摸状态；停止会抢画面的自动行为。"""
+
+        if not self.stroke_can_start():
+            return False
+
+        debug_log(
+            f"stroking begin from_state={self.state}"
+        )
+
+        if self.state == "walking":
+            self.stop_walk_timers()
+
+        self.single_click_timer.stop()
+        self.happy_timer.stop()
+        self.blink_wait_timer.stop()
+        self.blink_close_timer.stop()
+        self.auto_speech_timer.stop()
+        self.sleep_wait_timer.stop()
+        self.random_action_timer.stop()
+
+        # 抚摸不应继续累计之前的连戳轮次。
+        self.reset_poke_cycle()
+
+        self.is_stroking = True
+        self.stroke_candidate = False
+        self.stroke_frame_name = None
+        self.state = "stroking"
+
+        try:
+            self.grabMouse()
+        except RuntimeError:
+            pass
+
+        self.update_stroking_frame(
+            cursor_position
+        )
+        return True
+
+    def update_stroking_frame(
+        self,
+        cursor_position,
+    ):
+        """鼠标当前位于左/中/右区域，就显示对应抚摸图。"""
+
+        if (
+            not self.is_stroking
+            or not self.stroke_images_ready
+        ):
+            return
+
+        local_x = (
+            cursor_position.x()
+            - self.x()
+        )
+        ratio = local_x / max(
+            1,
+            self.width(),
+        )
+
+        if ratio < 1 / 3:
+            frame_name = "left"
+        elif ratio < 2 / 3:
+            frame_name = "middle"
+        else:
+            frame_name = "right"
+
+        # 这样鼠标左→右自然就是 left → middle → right，
+        # 右→左自然就是 right → middle → left。
+        if frame_name == self.stroke_frame_name:
+            return
+
+        frame = self.stroke_frames.get(
+            frame_name
+        )
+
+        if frame is None:
+            return
+
+        self.stroke_frame_name = frame_name
+        self.setPixmap(frame)
+
+    def finish_stroking(self):
+        """松手结束抚摸；直接恢复普通状态，不追加任何特殊动作。"""
+
+        if not self.is_stroking:
+            self.stroke_candidate = False
+            return False
+
+        debug_log(
+            f"stroking finish frame={self.stroke_frame_name}"
+        )
+
+        try:
+            self.releaseMouse()
+        except RuntimeError:
+            pass
+
+        self.is_stroking = False
+        self.stroke_candidate = False
+        self.stroke_frame_name = None
+
+        if self.state == "stroking":
+            self.state = "normal"
+            self.setPixmap(self.normal)
+
+        self.schedule_blink()
+        self.schedule_auto_speech()
+        self.schedule_random_action()
+        self.schedule_sleep()
+
+        if not self.walking_paused:
+            self.schedule_walk()
+
+        self.try_apply_pending_online_update()
+        return True
+
     # ---------- 拖动动画 ----------
 
     def begin_preserved_drag(self):
@@ -10960,6 +11162,15 @@ class DesktopPet(QLabel):
             self.reset_drag_motion_samples()
             self.click_woke_from_sleep = False
 
+            self.is_stroking = False
+            self.stroke_frame_name = None
+            self.stroke_candidate = (
+                self.stroke_can_start()
+                and self.point_is_in_stroke_head_area(
+                    self.press_position
+                )
+            )
+
             debug_log(
                 f"mouse press state={self.state} "
                 f"poke_locked={self.poke_input_locked}"
@@ -10977,49 +11188,90 @@ class DesktopPet(QLabel):
                 event.globalPosition().toPoint()
             )
 
+            # 已经进入抚摸：窗口不跟着鼠标移动，
+            # 只根据鼠标横向位置切 left / middle / right。
+            if self.is_stroking:
+                self.update_stroking_frame(
+                    current
+                )
+                event.accept()
+                return
+
             if (
                 not self.is_dragging
                 and self.press_position is not None
-                and (
+            ):
+                delta = (
                     current
                     - self.press_position
-                ).manhattanLength() > 5
-            ):
-                self.is_dragging = True
+                )
+                dx = delta.x()
+                dy = delta.y()
 
-                # 可随时拿起来的状态：
-                # normal / walking / 双击召唤跑步 / 五连戳逃跑 /
-                # bouncing / drag_release 的“嘿咻”动作。
-                # 这些状态都会切换成 drag1/drag2；
-                # 其它特殊动画继续采用“只移动、不换图”。
-                if self.pickup_drag_is_allowed():
-                    debug_log(
-                        "drag mode=pickup "
-                        f"from_state={self.state} "
-                        f"trigger={self.active_custom_action_trigger}"
-                    )
-
-                    self.prepare_for_pickup_drag()
-
-                    self.start_drag_animation(
+                # 从头部开始，并且第一次明显动作以水平滑动为主：
+                # 判定为抚摸。
+                if (
+                    self.stroke_candidate
+                    and abs(dx)
+                    >= STROKE_START_HORIZONTAL_PX
+                    and abs(dy)
+                    <= STROKE_MAX_START_VERTICAL_PX
+                    and abs(dx)
+                    >= abs(dy)
+                ):
+                    if self.begin_stroking(
                         current
-                    )
-                else:
-                    debug_log(
-                        f"drag mode=preserve state={self.state} "
-                        f"trigger={self.active_custom_action_trigger} "
-                        f"updating={self.update_in_progress}"
-                    )
-                    self.begin_preserved_drag()
+                    ):
+                        event.accept()
+                        return
 
-                # 明确抓住鼠标，鼠标移出果子窗口后也继续接收 release；
-                # watchdog 再作为 Windows/Qt 偶发漏事件的第二层保护。
-                try:
-                    self.grabMouse()
-                except RuntimeError:
-                    pass
+                # 若已经明显向下/斜着拖走，就取消抚摸候选，
+                # 保持原有“拖动果子”的手感。
+                if (
+                    self.stroke_candidate
+                    and (
+                        abs(dy)
+                        > STROKE_MAX_START_VERTICAL_PX
+                        or abs(dy) > abs(dx)
+                    )
+                ):
+                    self.stroke_candidate = False
 
-                self.drag_release_watchdog.start()
+                if delta.manhattanLength() > 5:
+                    self.stroke_candidate = False
+                    self.is_dragging = True
+
+                    # 可随时拿起来的状态：
+                    # normal / walking / 双击召唤跑步 / 五连戳逃跑 /
+                    # bouncing / drag_release 的“嘿咻”动作。
+                    # 这些状态都会切换成 drag1/drag2；
+                    # 其它特殊动画继续采用“只移动、不换图”。
+                    if self.pickup_drag_is_allowed():
+                        debug_log(
+                            "drag mode=pickup "
+                            f"from_state={self.state} "
+                            f"trigger={self.active_custom_action_trigger}"
+                        )
+
+                        self.prepare_for_pickup_drag()
+
+                        self.start_drag_animation(
+                            current
+                        )
+                    else:
+                        debug_log(
+                            f"drag mode=preserve state={self.state} "
+                            f"trigger={self.active_custom_action_trigger} "
+                            f"updating={self.update_in_progress}"
+                        )
+                        self.begin_preserved_drag()
+
+                    try:
+                        self.grabMouse()
+                    except RuntimeError:
+                        pass
+
+                    self.drag_release_watchdog.start()
 
             if self.is_dragging:
                 target = (
@@ -11065,7 +11317,16 @@ class DesktopPet(QLabel):
                 f"poke_locked={self.poke_input_locked}"
             )
 
-            if self.is_dragging:
+            if self.is_stroking:
+                self.ignore_next_left_release = False
+                self.finish_stroking()
+
+                self.drag_position = None
+                self.press_position = None
+                self.drag_last_window_position = None
+                self.click_woke_from_sleep = False
+
+            elif self.is_dragging:
                 self.ignore_next_left_release = False
                 self.finish_active_drag()
 
@@ -11099,6 +11360,7 @@ class DesktopPet(QLabel):
                 self.press_position = None
                 self.drag_last_window_position = None
                 self.click_woke_from_sleep = False
+                self.stroke_candidate = False
 
                 self.try_apply_pending_online_update()
 
@@ -11292,6 +11554,10 @@ class DesktopPet(QLabel):
 
     def quit_pet(self):
         self.wake_input_locked = False
+
+        if self.is_stroking:
+            self.finish_stroking()
+
         self.save_position()
         self.save_pet_state()
         self.fullness_decay_timer.stop()

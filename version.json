@@ -1,6 +1,6 @@
 {
-  "version": "5.31-explorer-folder-not-desktop",
-  "app_version": 59,
+  "version": "5.32-stroking-system",
+  "app_version": 60,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -34,15 +34,22 @@
     "complete.png",
     "success.png",
     "fail.png",
-    "update.png"
+    "update.png",
+    "strokeleft.PNG",
+    "strokemiddle.PNG",
+    "strokeright.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "ddb68809fa972ec4326b9c5b40ad3da23152b24286bbb203f2b857e4fc72a8f3",
+  "app_sha256": "209bfc63b5fc1ed61792628e536e963ff6c327cd0e75bfb9cce16ab2abb507ec",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
-  "asset_version": 1,
-  "changed_images": [],
+  "asset_version": 2,
+  "changed_images": [
+    "strokeleft.PNG",
+    "strokemiddle.PNG",
+    "strokeright.PNG"
+  ],
   "changed_sounds": []
 }
