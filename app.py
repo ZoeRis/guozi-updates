@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 61
+APP_BUILD_VERSION = 62
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -789,6 +789,9 @@ class DesktopPet(QLabel):
         # ---------- 喂食系统 ----------
         self.foods = []
         self.too_full_lines = []
+        self.hungry_lines_30 = []
+        self.hungry_lines_10 = []
+        self.hungry_lines_0 = []
         self.max_fullness = 100
         self.too_full_threshold = 90
         self.initial_fullness = 50
@@ -1178,6 +1181,14 @@ class DesktopPet(QLabel):
         )
         self.fullness_decay_timer.start()
 
+        # ---------- 饥饿反应 ----------
+
+        self.hunger_timer = QTimer(self)
+        self.hunger_timer.setSingleShot(True)
+        self.hunger_timer.timeout.connect(
+            self.try_hunger_reaction
+        )
+
         # ---------- 托盘 ----------
 
         self.setup_tray_icon()
@@ -1187,6 +1198,7 @@ class DesktopPet(QLabel):
         self.schedule_auto_speech()
         self.schedule_random_action()
         self.schedule_sleep()
+        self.schedule_hunger_reaction()
 
     # ---------- 设置与文件 ----------
 
@@ -2050,6 +2062,34 @@ class DesktopPet(QLabel):
             min(fullness_decay_seconds, 86400),
         )
 
+        def parse_line_group(key):
+            raw_lines = data.get(
+                key,
+                [],
+            )
+
+            if not isinstance(raw_lines, list):
+                raise ValueError(
+                    f"{key} 必须是列表。"
+                )
+
+            return [
+                str(line).strip()[:160]
+                for line in raw_lines[:50]
+                if isinstance(line, str)
+                and line.strip()
+            ]
+
+        hungry_lines_30 = parse_line_group(
+            "hungry_lines_30"
+        )
+        hungry_lines_10 = parse_line_group(
+            "hungry_lines_10"
+        )
+        hungry_lines_0 = parse_line_group(
+            "hungry_lines_0"
+        )
+
         raw_too_full_lines = data.get(
             "too_full_lines",
             [],
@@ -2310,6 +2350,9 @@ class DesktopPet(QLabel):
                 fullness_decay_seconds
             ),
             "too_full_lines": too_full_lines,
+            "hungry_lines_30": hungry_lines_30,
+            "hungry_lines_10": hungry_lines_10,
+            "hungry_lines_0": hungry_lines_0,
             "foods": foods,
         }
 
@@ -2319,6 +2362,9 @@ class DesktopPet(QLabel):
         if not FOODS_FILE.exists():
             self.foods = []
             self.too_full_lines = []
+            self.hungry_lines_30 = []
+            self.hungry_lines_10 = []
+            self.hungry_lines_0 = []
             return
 
         try:
@@ -2338,11 +2384,23 @@ class DesktopPet(QLabel):
             )
             self.foods = []
             self.too_full_lines = []
+            self.hungry_lines_30 = []
+            self.hungry_lines_10 = []
+            self.hungry_lines_0 = []
             return
 
         self.foods = config["foods"]
         self.too_full_lines = (
             config["too_full_lines"]
+        )
+        self.hungry_lines_30 = (
+            config["hungry_lines_30"]
+        )
+        self.hungry_lines_10 = (
+            config["hungry_lines_10"]
+        )
+        self.hungry_lines_0 = (
+            config["hungry_lines_0"]
         )
         self.max_fullness = (
             config["max_fullness"]
@@ -2370,6 +2428,9 @@ class DesktopPet(QLabel):
 
         if hasattr(self, "tray_foods_menu"):
             self.refresh_tray_foods_menu()
+
+        if hasattr(self, "hunger_timer"):
+            self.schedule_hunger_reaction()
 
     def load_pet_state(self):
         """读取本机饱食度；第一次运行会自动创建 pet_state.json。"""
@@ -2541,7 +2602,163 @@ class DesktopPet(QLabel):
         ):
             self.refresh_tray_foods_menu()
 
+        if (
+            changed
+            and hasattr(
+                self,
+                "hunger_timer",
+            )
+        ):
+            self.schedule_hunger_reaction()
+
         return changed
+
+    def hunger_reaction_delay_ms(self):
+        """根据当前饱食度决定下一次饥饿提醒的间隔。"""
+
+        if self.fullness > 30:
+            return None
+
+        if self.fullness <= 0:
+            return random.randint(
+                60,
+                120,
+            ) * 1000
+
+        if self.fullness <= 10:
+            return random.randint(
+                90,
+                180,
+            ) * 1000
+
+        return random.randint(
+            240,
+            420,
+        ) * 1000
+
+    def schedule_hunger_reaction(
+        self,
+        retry_ms=None,
+    ):
+        """按当前饱食度安排下一次饥饿反应。"""
+
+        if not hasattr(self, "hunger_timer"):
+            return
+
+        self.hunger_timer.stop()
+
+        if retry_ms is not None:
+            self.hunger_timer.start(
+                max(
+                    1000,
+                    int(retry_ms),
+                )
+            )
+            return
+
+        delay = self.hunger_reaction_delay_ms()
+
+        if delay is not None:
+            self.hunger_timer.start(delay)
+
+    def current_hunger_lines(self):
+        """返回当前饱食度对应的台词池。"""
+
+        if self.fullness <= 0:
+            return self.hungry_lines_0
+
+        if self.fullness <= 10:
+            return self.hungry_lines_10
+
+        if self.fullness <= 30:
+            return self.hungry_lines_30
+
+        return []
+
+    def hunger_reaction_is_safe(self):
+        """只在不会打断用户交互/重要动作时触发饥饿反应。"""
+
+        return (
+            self.isVisible()
+            and self.state in (
+                "normal",
+                "walking",
+            )
+            and not self.is_dragging
+            and not self.is_stroking
+            and not self.update_in_progress
+            and not self.speech_bubble.isVisible()
+        )
+
+    def start_zero_hunger_animation(self):
+        """0 饱食度时播放两帧饿肚子动画。"""
+
+        lines = list(
+            self.hungry_lines_0
+        )
+
+        if not lines:
+            return False
+
+        if not self.hungry_images_ready:
+            self.say(
+                random.choice(lines)
+            )
+            return True
+
+        self.play_custom_action(
+            {
+                "name": "饿肚子",
+                "steps": [
+                    {
+                        "type": "say",
+                        "texts": lines,
+                    },
+                    {
+                        "type": "frames",
+                        "frames": [
+                            "hungry1.PNG",
+                            "hungry2.PNG",
+                        ],
+                        "frame_interval": 320,
+                        "loops": 4,
+                        "playback": "loop",
+                    },
+                ],
+            },
+            trigger_name="hunger_zero",
+        )
+        return True
+
+    def try_hunger_reaction(self):
+        """根据饱食度偶尔提醒吃东西。"""
+
+        self.apply_fullness_decay()
+
+        if self.fullness > 30:
+            self.hunger_timer.stop()
+            return
+
+        if not self.hunger_reaction_is_safe():
+            self.schedule_hunger_reaction(
+                retry_ms=30000
+            )
+            return
+
+        lines = self.current_hunger_lines()
+
+        if not lines:
+            self.schedule_hunger_reaction()
+            return
+
+        if self.fullness <= 0:
+            self.start_zero_hunger_animation()
+        else:
+            self.say(
+                random.choice(lines)
+            )
+
+        self.schedule_hunger_reaction()
 
     def fullness_status_text(self):
         return (
@@ -2561,6 +2778,8 @@ class DesktopPet(QLabel):
             "tray_foods_menu",
         ):
             self.refresh_tray_foods_menu()
+
+        self.schedule_hunger_reaction()
 
         self.say("消食魔法——！")
 
@@ -2714,6 +2933,8 @@ class DesktopPet(QLabel):
             "tray_foods_menu",
         ):
             self.refresh_tray_foods_menu()
+
+        self.schedule_hunger_reaction()
 
         debug_log(
             "feeding finished "
@@ -2950,6 +3171,24 @@ class DesktopPet(QLabel):
             self.stroke_frames.values()
         )
 
+        hungry_1 = self.load_optional_image(
+            "hungry1.PNG"
+        )
+        hungry_2 = self.load_optional_image(
+            "hungry2.PNG"
+        )
+        self.hungry_frames = [
+            frame
+            for frame in (
+                hungry_1,
+                hungry_2,
+            )
+            if frame is not None
+        ]
+        self.hungry_images_ready = (
+            len(self.hungry_frames) == 2
+        )
+
     def apply_timer_settings(self):
         self.sleep_animation_timer.setInterval(
             self.settings["sleep_frame_interval"]
@@ -3020,6 +3259,7 @@ class DesktopPet(QLabel):
         self.schedule_auto_speech()
         self.schedule_random_action()
         self.schedule_sleep()
+        self.schedule_hunger_reaction()
 
         if not self.walking_paused:
             self.schedule_walk()
@@ -11639,6 +11879,7 @@ class DesktopPet(QLabel):
         self.save_position()
         self.save_pet_state()
         self.fullness_decay_timer.stop()
+        self.hunger_timer.stop()
         self.speech_bubble.hide()
         self.update_status_hide_timer.stop()
         self.update_status_widget.animation_timer.stop()
@@ -11670,6 +11911,7 @@ class DesktopPet(QLabel):
         self.save_position()
         self.save_pet_state()
         self.fullness_decay_timer.stop()
+        self.hunger_timer.stop()
         self.speech_bubble.hide()
         self.drag_animation_timer.stop()
         self.bounce_timer.stop()

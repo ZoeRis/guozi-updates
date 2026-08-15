@@ -1,6 +1,6 @@
 {
-  "version": "5.33-inertia-landing-sync",
-  "app_version": 61,
+  "version": "5.34-hunger-reactions",
+  "app_version": 62,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -37,15 +37,20 @@
     "update.png",
     "strokeleft.PNG",
     "strokemiddle.PNG",
-    "strokeright.PNG"
+    "strokeright.PNG",
+    "hungry1.PNG",
+    "hungry2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "de98df28768dae65a2dde0fca05411d62df14216419f32894714fdcf2fda44af",
+  "app_sha256": "791d14997234815456a18554195206f59374582bf82ab95987b38a323ad62225",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
-  "asset_version": 2,
-  "changed_images": [],
+  "asset_version": 3,
+  "changed_images": [
+    "hungry1.PNG",
+    "hungry2.PNG"
+  ],
   "changed_sounds": []
 }
