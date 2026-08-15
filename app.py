@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 56
+APP_BUILD_VERSION = 57
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -115,7 +115,18 @@ VK_LBUTTON = 0x01
 
 LVM_FIRST = 0x1000
 LVM_GETNEXTITEM = LVM_FIRST + 12
+LVM_HITTEST = LVM_FIRST + 18
 LVNI_SELECTED = 0x0002
+
+class LVHITTESTINFO(ctypes.Structure):
+    _fields_ = [
+        ("pt", wintypes.POINT),
+        ("flags", wintypes.UINT),
+        ("iItem", ctypes.c_int),
+        ("iSubItem", ctypes.c_int),
+        ("iGroup", ctypes.c_int),
+    ]
+
 
 DESKTOP_WINDOW_CLASSES = {
     "Progman",
@@ -176,6 +187,14 @@ def configure_windows_mouse_api():
     ]
     user32.SendMessageW.restype = (
         ctypes.c_ssize_t
+    )
+
+    user32.ScreenToClient.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.POINT),
+    ]
+    user32.ScreenToClient.restype = (
+        wintypes.BOOL
     )
 
 
@@ -8100,6 +8119,69 @@ class DesktopPet(QLabel):
 
         return 0
 
+    def desktop_item_at_point(
+        self,
+        native_point,
+    ):
+        """精确判断鼠标点是否落在桌面某个图标/名称区域。"""
+
+        if sys.platform != "win32":
+            return False
+
+        list_view = self.desktop_list_view_at_point(
+            native_point
+        )
+
+        if not list_view:
+            return False
+
+        client_point = wintypes.POINT(
+            int(native_point.x),
+            int(native_point.y),
+        )
+
+        try:
+            ok = ctypes.windll.user32.ScreenToClient(
+                list_view,
+                ctypes.byref(client_point),
+            )
+        except (
+            AttributeError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
+            return False
+
+        if not ok:
+            return False
+
+        hit = LVHITTESTINFO()
+        hit.pt = client_point
+        hit.iItem = -1
+        hit.iSubItem = 0
+        hit.iGroup = -1
+
+        try:
+            result = ctypes.windll.user32.SendMessageW(
+                list_view,
+                LVM_HITTEST,
+                0,
+                ctypes.cast(
+                    ctypes.byref(hit),
+                    ctypes.c_void_p,
+                ).value,
+            )
+        except (
+            AttributeError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
+            return False
+
+        return int(result) >= 0 or int(hit.iItem) >= 0
+
     def desktop_has_selected_icon(
         self,
         native_point,
@@ -8262,10 +8344,23 @@ class DesktopPet(QLabel):
             self.global_first_click_time = 0.0
             return
 
-        # Windows 桌面图标和真正的空白桌面都属于
-        # SysListView32；只看窗口类会把“双击文件”误认成
-        # “双击桌面空白”。鼠标松开后，如果 Explorer 中
-        # 有桌面图标处于选中状态，就不触发果子召唤。
+        # Windows 桌面图标和真正的空白桌面都属于 SysListView32。
+        #
+        # 先直接用 ListView hit-test 判断“这一下是不是点在某个
+        # 桌面项目上”。这比依赖 Explorer 的“选中状态”稳定，
+        # 因为不同电脑上第二次双击松手后，选中状态更新时机并不一致。
+        if self.desktop_item_at_point(
+            native_point
+        ):
+            debug_log(
+                "desktop summon ignored: "
+                "desktop item hit"
+            )
+            self.global_first_click_point = None
+            self.global_first_click_time = 0.0
+            return
+
+        # 再保留旧的 selected 检查当作第二层兜底。
         if self.desktop_has_selected_icon(
             native_point
         ):
