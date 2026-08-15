@@ -1,5 +1,5 @@
 {
-  "version": "5.36-yawn-timing-tweak",
+  "version": "5.36-scratch-action",
   "app_version": 62,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
@@ -48,6 +48,9 @@
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
   "asset_version": 4,
-  "changed_images": [],
+  "changed_images": [
+    "scratch1.PNG",
+    "scratch2.PNG"
+  ],
   "changed_sounds": []
 }

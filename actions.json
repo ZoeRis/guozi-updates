@@ -1,5 +1,5 @@
 {
-  "version": 33,
+  "version": 34,
   "actions": [
     {
       "name": "开心摇摆",
@@ -209,6 +209,28 @@
           ],
           "frame_interval": 130,
           "loops": 1,
+          "playback": "loop"
+        }
+      ]
+    },
+    {
+      "name": "挠痒",
+      "triggers": [
+        "manual",
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 90,
+      "steps": [
+        {
+          "type": "frames",
+          "frames": [
+            "scratch1.PNG",
+            "scratch2.PNG"
+          ],
+          "frame_interval": 170,
+          "loops": 5,
           "playback": "loop"
         }
       ]
