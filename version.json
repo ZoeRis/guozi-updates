@@ -1,5 +1,5 @@
 {
-  "version": "5.34-hunger-reactions",
+  "version": "5.35-yawn-random-action",
   "app_version": 62,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
@@ -47,10 +47,15 @@
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
-  "asset_version": 3,
+  "asset_version": 4,
   "changed_images": [
-    "hungry1.PNG",
-    "hungry2.PNG"
+    "yawn1.PNG",
+    "yawn2.PNG",
+    "yawn3.PNG",
+    "yawn4.PNG",
+    "yawn5.PNG",
+    "yawn6.PNG",
+    "yawn7.PNG"
   ],
   "changed_sounds": []
 }

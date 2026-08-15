@@ -1,5 +1,5 @@
 {
-  "version": 31,
+  "version": 32,
   "actions": [
     {
       "name": "开心摇摆",
@@ -175,6 +175,33 @@
           "type": "move_away_mouse",
           "distance": 260,
           "duration": 1000
+        }
+      ]
+    },
+    {
+      "name": "打哈欠",
+      "triggers": [
+        "manual",
+        "random"
+      ],
+      "weight": 1,
+      "chance": 100,
+      "cooldown": 120,
+      "steps": [
+        {
+          "type": "frames",
+          "frames": [
+            "yawn1.PNG",
+            "yawn2.PNG",
+            "yawn3.PNG",
+            "yawn4.PNG",
+            "yawn5.PNG",
+            "yawn6.PNG",
+            "yawn7.PNG"
+          ],
+          "frame_interval": 180,
+          "loops": 1,
+          "playback": "loop"
         }
       ]
     }
