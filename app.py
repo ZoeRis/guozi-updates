@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 62
+APP_BUILD_VERSION = 63
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -825,6 +825,7 @@ class DesktopPet(QLabel):
         self.custom_action_step_target = None
         self.custom_action_origin = None
         self.custom_action_frame_sequence = []
+        self.directional_action_variant = None
 
         self.random_action_has_played = False
         self.startup_greeting_pending = False
@@ -1661,6 +1662,110 @@ class DesktopPet(QLabel):
                 "duration": duration,
                 "offset_x": offset_x,
                 "offset_y": offset_y,
+            }
+
+        if step_type == "move_near_mouse":
+            duration = max(
+                100,
+                min(
+                    int(raw_step.get("duration", 700)),
+                    15000,
+                ),
+            )
+            distance = max(
+                0,
+                min(
+                    int(raw_step.get("distance", 18)),
+                    400,
+                ),
+            )
+            offset_y = max(
+                -600,
+                min(
+                    int(raw_step.get("offset_y", 0)),
+                    600,
+                ),
+            )
+            prefer_side = str(
+                raw_step.get("prefer_side", "auto")
+            ).strip().lower()
+
+            if prefer_side not in ("auto", "left", "right"):
+                prefer_side = "auto"
+
+            return {
+                "type": "move_near_mouse",
+                "duration": duration,
+                "distance": distance,
+                "offset_y": offset_y,
+                "prefer_side": prefer_side,
+            }
+
+        if step_type == "frames_mouse_side":
+            raw_left_frames = raw_step.get("left_frames", [])
+            raw_right_frames = raw_step.get("right_frames", [])
+
+            if not isinstance(raw_left_frames, list) or not isinstance(raw_right_frames, list):
+                return None
+
+            left_frames = []
+            right_frames = []
+
+            for filename in raw_left_frames[:40]:
+                safe_name = self.sanitize_action_filename(filename)
+                if safe_name:
+                    left_frames.append(safe_name)
+
+            for filename in raw_right_frames[:40]:
+                safe_name = self.sanitize_action_filename(filename)
+                if safe_name:
+                    right_frames.append(safe_name)
+
+            if not left_frames and not right_frames:
+                return None
+
+            if not left_frames:
+                left_frames = list(right_frames)
+
+            if not right_frames:
+                right_frames = list(left_frames)
+
+            frame_interval = max(
+                60,
+                min(
+                    int(
+                        raw_step.get(
+                            "frame_interval",
+                            220,
+                        )
+                    ),
+                    5000,
+                ),
+            )
+            loops = max(
+                1,
+                min(
+                    int(raw_step.get("loops", 1)),
+                    50,
+                ),
+            )
+            playback = str(
+                raw_step.get(
+                    "playback",
+                    "loop",
+                )
+            ).strip().lower()
+
+            if playback not in ("loop", "pingpong"):
+                playback = "loop"
+
+            return {
+                "type": "frames_mouse_side",
+                "left_frames": left_frames,
+                "right_frames": right_frames,
+                "frame_interval": frame_interval,
+                "loops": loops,
+                "playback": playback,
             }
 
         if step_type == "move_away_mouse":
@@ -7421,6 +7526,7 @@ class DesktopPet(QLabel):
         self.active_custom_action_trigger = (
             trigger_name
         )
+        self.directional_action_variant = None
         self.state = "custom_action"
         self.custom_action_steps = [
             dict(step)
@@ -7492,11 +7598,32 @@ class DesktopPet(QLabel):
                 )
                 return
 
-            if step_type == "frames":
+            if step_type in ("frames", "frames_mouse_side"):
                 try:
+                    if step_type == "frames_mouse_side":
+                        variant = self.directional_action_variant
+                        selected_filenames = list(
+                            step.get(
+                                "right_frames"
+                                if variant == "right"
+                                else "left_frames",
+                                [],
+                            )
+                        )
+
+                        if not selected_filenames:
+                            selected_filenames = list(
+                                step.get("left_frames", [])
+                                or step.get("right_frames", [])
+                            )
+                    else:
+                        selected_filenames = list(
+                            step["frames"]
+                        )
+
                     frames = [
                         self.load_action_image(filename)
-                        for filename in step["frames"]
+                        for filename in selected_filenames
                     ]
                 except (
                     KeyError,
@@ -7547,6 +7674,7 @@ class DesktopPet(QLabel):
                 "move_random",
                 "move_edge",
                 "move_mouse",
+                "move_near_mouse",
                 "move_away_mouse",
                 "return",
                 "jump",
@@ -7711,6 +7839,99 @@ class DesktopPet(QLabel):
                 cursor.y()
                 - self.height() // 2
                 + int(step.get("offset_y", 0)),
+            )
+            self.custom_action_step_target = QPoint(
+                target_x,
+                target_y,
+            )
+
+        elif step_type == "move_near_mouse":
+            cursor = QCursor.pos()
+            area = self.current_action_screen_area()
+            distance = int(step.get("distance", 18))
+            offset_y = int(step.get("offset_y", 0))
+            prefer_side = str(
+                step.get("prefer_side", "auto")
+            ).strip().lower()
+
+            raw_y = cursor.y() - self.height() // 2 + offset_y
+            candidate_specs = [
+                ("left", cursor.x() - self.width() - distance),
+                ("right", cursor.x() + distance),
+            ]
+            candidates = []
+
+            for pet_side, raw_x in candidate_specs:
+                target_x, target_y = self.safe_coordinates(
+                    raw_x,
+                    raw_y,
+                )
+
+                if pet_side == "left":
+                    still_same_side = (
+                        target_x + self.width()
+                        <= cursor.x()
+                    )
+                else:
+                    still_same_side = (
+                        target_x >= cursor.x()
+                    )
+
+                if area is not None:
+                    if pet_side == "left":
+                        unclamped_valid = (
+                            raw_x >= area.left()
+                        )
+                    else:
+                        unclamped_valid = (
+                            raw_x
+                            <= area.right()
+                            - self.width()
+                            + 1
+                        )
+                else:
+                    unclamped_valid = True
+
+                travel = math.hypot(
+                    target_x - self.x(),
+                    target_y - self.y(),
+                )
+
+                prefer_penalty = 0
+                if prefer_side in ("left", "right") and prefer_side != pet_side:
+                    prefer_penalty = 1
+
+                validity_penalty = 0 if unclamped_valid and still_same_side else 1
+
+                candidates.append(
+                    (
+                        prefer_penalty,
+                        validity_penalty,
+                        travel,
+                        pet_side,
+                        target_x,
+                        target_y,
+                    )
+                )
+
+            if candidates:
+                (
+                    _prefer_penalty,
+                    _validity_penalty,
+                    _travel,
+                    pet_side,
+                    target_x,
+                    target_y,
+                ) = min(candidates)
+            else:
+                pet_side = "right"
+                target_x, target_y = self.safe_coordinates(
+                    self.x(),
+                    self.y(),
+                )
+
+            self.directional_action_variant = (
+                "right" if pet_side == "left" else "left"
             )
             self.custom_action_step_target = QPoint(
                 target_x,
@@ -7999,6 +8220,7 @@ class DesktopPet(QLabel):
             "move_random",
             "move_edge",
             "move_mouse",
+            "move_near_mouse",
             "move_away_mouse",
             "return",
             "jump",
@@ -8056,6 +8278,7 @@ class DesktopPet(QLabel):
             "move_random",
             "move_edge",
             "move_mouse",
+            "move_near_mouse",
             "move_away_mouse",
             "return",
         ):
@@ -8150,6 +8373,7 @@ class DesktopPet(QLabel):
                 "move_random",
                 "move_edge",
                 "move_mouse",
+                "move_near_mouse",
                 "move_away_mouse",
                 "return",
             ):
@@ -8216,6 +8440,7 @@ class DesktopPet(QLabel):
         self.custom_action_step_start = None
         self.custom_action_step_target = None
         self.custom_action_origin = None
+        self.directional_action_variant = None
 
         if self.state == "custom_action":
             self.state = "normal"
