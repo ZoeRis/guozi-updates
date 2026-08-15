@@ -1,5 +1,5 @@
 {
-  "version": 32,
+  "version": 33,
   "actions": [
     {
       "name": "开心摇摆",
@@ -192,14 +192,22 @@
           "type": "frames",
           "frames": [
             "yawn1.PNG",
-            "yawn2.PNG",
+            "yawn2.PNG"
+          ],
+          "frame_interval": 180,
+          "loops": 3,
+          "playback": "loop"
+        },
+        {
+          "type": "frames",
+          "frames": [
             "yawn3.PNG",
             "yawn4.PNG",
             "yawn5.PNG",
             "yawn6.PNG",
             "yawn7.PNG"
           ],
-          "frame_interval": 180,
+          "frame_interval": 130,
           "loops": 1,
           "playback": "loop"
         }
