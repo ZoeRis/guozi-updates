@@ -1,6 +1,6 @@
 {
-  "version": "5.39-peek-running-fix",
-  "app_version": 64,
+  "version": "5.40-interrupt-peek-drag",
+  "app_version": 65,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -42,7 +42,7 @@
     "hungry2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "df0968ff5e8e53719aa88cebe7cfb03a19cbdb23cb141ef9f2ebc77614c7ecea",
+  "app_sha256": "15536f73e48f2a5465a620470dc81ea106fbe4d67c3b330dc490237036b7b144",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",

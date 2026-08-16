@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 64
+APP_BUILD_VERSION = 65
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -11177,11 +11177,15 @@ class DesktopPet(QLabel):
                 )
 
             # 原有 drag_release 可以拿起来；
-            # 五连戳逃跑的 move_away_mouse 跑步也允许直接抓住。
+            # 五连戳逃跑的 move_away_mouse，以及
+            # 跑向鼠标偷看的 move_near_mouse，都允许直接抓住。
             if (
                 self.active_custom_action_trigger
                 == "drag_release"
-                or current_type == "move_away_mouse"
+                or current_type in (
+                    "move_away_mouse",
+                    "move_near_mouse",
+                )
             ):
                 return True
 
@@ -11206,7 +11210,10 @@ class DesktopPet(QLabel):
             if (
                 self.active_custom_action_trigger
                 == "drag_release"
-                or current_type == "move_away_mouse"
+                or current_type in (
+                    "move_away_mouse",
+                    "move_near_mouse",
+                )
             ):
                 debug_log(
                     "pickup drag interrupts custom movement "
@@ -11817,8 +11824,8 @@ class DesktopPet(QLabel):
 
                     # 可随时拿起来的状态：
                     # normal / walking / 双击召唤跑步 / 五连戳逃跑 /
-                    # bouncing / drag_release 的“嘿咻”动作。
-                    # 这些状态都会切换成 drag1/drag2；
+                    # 跑向鼠标偷看 / bouncing / drag_release 的“嘿咻”动作。
+                    # 这些状态都会立刻取消当前移动并切换成 drag1/drag2；
                     # 其它特殊动画继续采用“只移动、不换图”。
                     if self.pickup_drag_is_allowed():
                         debug_log(
