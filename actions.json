@@ -1,5 +1,5 @@
 {
-  "version": 35,
+  "version": 36,
   "actions": [
     {
       "name": "开心摇摆",
@@ -288,7 +288,7 @@
             "nap1.PNG",
             "nap2.PNG"
           ],
-          "frame_interval": 240,
+          "frame_interval": 1000,
           "loops": 5,
           "playback": "loop"
         }
