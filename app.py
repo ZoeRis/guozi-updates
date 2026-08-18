@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 67
+APP_BUILD_VERSION = 68
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -241,6 +241,62 @@ STROKE_COMFY_FRAME_INTERVAL_MS = 420
 STROKE_STOP_FRAME_MS = 1500
 STROKE_BEG_FRAME_INTERVAL_MS = 360
 STROKE_BEG_LOOPS = 2
+
+# ---------- 最近互动 / 时间环境 ----------
+RECENT_GRUDGE_SECONDS = 180
+RECENT_COMFY_SECONDS = 300
+RECENT_FED_SECONDS = 300
+RECENT_WAKE_SECONDS = 180
+RECENT_CLOSE_SECONDS = 300
+CLOSE_INTERACTION_WINDOW_SECONDS = 240
+CLOSE_INTERACTION_THRESHOLD = 3
+
+LATE_NIGHT_LINES = [
+    "你还不睡觉吗？",
+    "果子感觉自己要睡了。",
+    "要睡觉了吗？不要……？",
+]
+
+MIDDAY_SLEEPY_LINES = [
+    "午休时间捏。",
+    "果子需要床。",
+    "困……",
+]
+
+LATE_NIGHT_PRE_SLEEP_LINES = [
+    "头好重……",
+    "眼睛睁不开了……",
+]
+
+GRUDGE_LINES = [
+    "我不要理你了！",
+    "讨厌讨厌！",
+    "果子要自己静静！",
+]
+
+RECENT_COMFY_LINES = [
+    "啦啦啦~嘿嘿。",
+    "你在做什么呢？和我玩嘛。",
+    "喜欢你哟！(●'◡'●)",
+]
+
+RECENT_FED_LINES = [
+    "谢谢你拿好吃的给我！",
+    "刚刚那个好好吃哟！",
+    "吃得饱饱心情好好！（蹭蹭）",
+]
+
+RECENT_WAKE_LINES = [
+    "果子醒了，但是脑子还没有。",
+    "(-.-)｡oO",
+    "我还要缓一下……",
+]
+
+RECENT_CLOSE_LINES = [
+    "你在干嘛呀？你在忙吗？理理我嘛。",
+    "你在做什么呢？我也想看看。",
+    "吱吱唧唧！（发出很大的声音）",
+]
 
 
 DEFAULT_SETTINGS = {
@@ -853,6 +909,10 @@ class DesktopPet(QLabel):
         )
         self.mouse_idle_since = time.monotonic()
         self.mouse_idle_attempted = False
+
+        # 短期“记得最近发生过什么”，只存在于本次运行内。
+        self.recent_state_until = {}
+        self.close_interaction_times = []
 
         # 连戳循环：
         # 第 1 组三下 -> “你怎么还戳呀”
@@ -3235,6 +3295,18 @@ class DesktopPet(QLabel):
 
         self.schedule_hunger_reaction()
 
+        if food.get(
+            "preference"
+        ) in (
+            "love",
+            "like",
+        ):
+            self.set_recent_state(
+                "fed",
+                RECENT_FED_SECONDS,
+            )
+            self.record_close_interaction()
+
         debug_log(
             "feeding finished "
             f"food={food_id} "
@@ -3516,6 +3588,18 @@ class DesktopPet(QLabel):
         ]
         self.beg_frames_ready = all(
             self.beg_frames
+        )
+
+        self.soangry_frames = [
+            self.load_optional_image(
+                "soangry1.PNG"
+            ),
+            self.load_optional_image(
+                "soangry2.PNG"
+            ),
+        ]
+        self.soangry_frames_ready = all(
+            self.soangry_frames
         )
 
     def apply_timer_settings(self):
@@ -6425,6 +6509,224 @@ class DesktopPet(QLabel):
         )
 
 
+    # ---------- 最近互动 / 时间环境 ----------
+
+    def current_hour(self):
+        return datetime.now().hour
+
+    def is_late_night(self):
+        """凌晨 1:00～4:59。"""
+
+        hour = self.current_hour()
+        return 1 <= hour < 5
+
+    def is_midday_sleepy_time(self):
+        """中午到下午早些时候：11:30～14:59。"""
+
+        now = datetime.now()
+        minutes = now.hour * 60 + now.minute
+        return 11 * 60 + 30 <= minutes < 15 * 60
+
+    def set_recent_state(
+        self,
+        name,
+        duration_seconds,
+    ):
+        self.recent_state_until[
+            str(name)
+        ] = (
+            time.monotonic()
+            + max(
+                1,
+                float(duration_seconds),
+            )
+        )
+
+    def recent_state_active(self, name):
+        until = self.recent_state_until.get(
+            str(name),
+            0.0,
+        )
+
+        if time.monotonic() < until:
+            return True
+
+        self.recent_state_until.pop(
+            str(name),
+            None,
+        )
+        return False
+
+    def record_close_interaction(self):
+        """记录一次偏亲近的互动；密集出现时进入短暂黏人状态。"""
+
+        now = time.monotonic()
+        cutoff = (
+            now
+            - CLOSE_INTERACTION_WINDOW_SECONDS
+        )
+
+        self.close_interaction_times = [
+            item
+            for item in self.close_interaction_times
+            if item >= cutoff
+        ]
+        self.close_interaction_times.append(
+            now
+        )
+
+        if (
+            len(self.close_interaction_times)
+            >= CLOSE_INTERACTION_THRESHOLD
+        ):
+            self.set_recent_state(
+                "close",
+                RECENT_CLOSE_SECONDS,
+            )
+            # 达标后重新累计，避免每次互动都反复续期。
+            self.close_interaction_times = []
+
+    def contextual_random_lines(self):
+        """近期状态台词池；高优先级状态覆盖低优先级。"""
+
+        if self.recent_state_active(
+            "just_woke"
+        ):
+            return RECENT_WAKE_LINES
+
+        if self.recent_state_active(
+            "comfy"
+        ):
+            return RECENT_COMFY_LINES
+
+        if self.recent_state_active(
+            "fed"
+        ):
+            return RECENT_FED_LINES
+
+        if self.recent_state_active(
+            "close"
+        ):
+            return RECENT_CLOSE_LINES
+
+        if self.is_late_night():
+            return LATE_NIGHT_LINES
+
+        return []
+
+    def try_recent_grudge_reaction(self):
+        """刚被连续戳过后，再来戳时偶尔闹一下别扭。"""
+
+        if (
+            not self.recent_state_active(
+                "grudge"
+            )
+            or self.state
+            not in (
+                "normal",
+                "walking",
+            )
+            or self.is_dragging
+            or random.random() >= 0.60
+        ):
+            return False
+
+        steps = [
+            {
+                "type": "say",
+                "texts": list(
+                    GRUDGE_LINES
+                ),
+            }
+        ]
+
+        if self.soangry_frames_ready:
+            steps.append(
+                {
+                    "type": "frames",
+                    "frames": [
+                        "soangry1.PNG",
+                        "soangry2.PNG",
+                    ],
+                    "frame_interval": 240,
+                    "loops": 3,
+                    "playback": "loop",
+                }
+            )
+
+        self.play_custom_action(
+            {
+                "name": "短暂记仇",
+                "steps": steps,
+            },
+            trigger_name="recent_grudge",
+        )
+        return True
+
+    def play_midday_sleepy_action(self):
+        """中午偶尔优先打哈欠/打盹，仍尊重各自动作冷却。"""
+
+        if (
+            not self.is_midday_sleepy_time()
+            or random.random() >= 0.35
+        ):
+            return False
+
+        now = time.monotonic()
+        candidates = []
+
+        for action in self.actions:
+            if action.get("name") not in (
+                "打哈欠",
+                "打盹",
+            ):
+                continue
+
+            if not self.action_is_off_cooldown(
+                action,
+                "random",
+                now,
+            ):
+                continue
+
+            candidates.append(action)
+
+        action = self.choose_weighted_action(
+            candidates
+        )
+
+        if action is None:
+            return False
+
+        self.action_last_triggered[
+            self.action_trigger_key(
+                action,
+                "random",
+            )
+        ] = now
+
+        # 中午动作本身不强制说话；偶尔附一句困困台词。
+        if random.random() < 0.55:
+            self.say(
+                random.choice(
+                    MIDDAY_SLEEPY_LINES
+                )
+            )
+
+        self.play_custom_action(
+            action,
+            trigger_name="random",
+        )
+        return True
+
+    def user_requested_speech(self):
+        """右键主动让果子说句话，也算一次亲近互动。"""
+
+        self.record_close_interaction()
+        self.say_random_message(
+            user_initiated=True
+        )
+
     # ---------- 气泡 ----------
 
     def say(self, text):
@@ -6448,12 +6750,14 @@ class DesktopPet(QLabel):
             * 1000
         )
 
-    def say_random_message(self):
+    def say_random_message(
+        self,
+        user_initiated=False,
+    ):
         if self.state == "sleeping":
             return
 
-        # 两种说话音效 1:1 随机：
-        # 自动随机台词和右键“让果子说句话”都会走这里。
+        # 两种说话音效 1:1 随机。
         talk_sound = random.choice(
             (
                 "talk.wav",
@@ -6461,7 +6765,26 @@ class DesktopPet(QLabel):
             )
         )
         self.play_action_sound(talk_sound)
-        self.say(random.choice(self.messages))
+
+        contextual_lines = (
+            self.contextual_random_lines()
+        )
+
+        # 近期状态不会完全盖掉普通台词；
+        # 约 65% 使用上下文，剩下仍是日常随机话。
+        if (
+            contextual_lines
+            and random.random() < 0.65
+        ):
+            text = random.choice(
+                contextual_lines
+            )
+        else:
+            text = random.choice(
+                self.messages
+            )
+
+        self.say(text)
 
     def position_speech_bubble(self):
         screen = QApplication.screenAt(
@@ -6829,6 +7152,9 @@ class DesktopPet(QLabel):
     def handle_single_click(self):
         """执行普通戳击或当前轮次的三连戳特殊反应。"""
 
+        if self.try_recent_grudge_reaction():
+            return
+
         trigger_name = self.register_poke()
 
         if trigger_name is None:
@@ -6866,6 +7192,10 @@ class DesktopPet(QLabel):
 
         # 动作本身已经播完，此时仍保持 poke_input_locked=True。
         # 再过 0.5 秒才重新允许下一组戳击。
+        self.set_recent_state(
+            "grudge",
+            RECENT_GRUDGE_SECONDS,
+        )
         self.poke_cooldown_timer.start(500)
 
     def unlock_poke_input(self):
@@ -6914,7 +7244,9 @@ class DesktopPet(QLabel):
             return
 
         if self.state == "sleeping":
-            self.wake_up()
+            self.wake_up(
+                human=True
+            )
             return
 
         self.stop_walk_timers()
@@ -7196,6 +7528,10 @@ class DesktopPet(QLabel):
             )
             and not self.is_dragging
         ):
+            if self.play_midday_sleepy_action():
+                self.random_action_has_played = True
+                return
+
             if self.play_trigger_action("random"):
                 self.random_action_has_played = True
                 return
@@ -10780,6 +11116,11 @@ class DesktopPet(QLabel):
         self.stroke_comfy_frame_index = 0
 
         if was_comfy:
+            self.set_recent_state(
+                "comfy",
+                RECENT_COMFY_SECONDS,
+            )
+            self.record_close_interaction()
             self.start_stroke_post_sequence()
         else:
             if self.state == "stroking":
@@ -11095,9 +11436,27 @@ class DesktopPet(QLabel):
         ):
             return
 
+        wait_min = int(
+            self.settings["sleep_wait_min"]
+        )
+        wait_max = int(
+            self.settings["sleep_wait_max"]
+        )
+
+        if self.is_late_night():
+            # 深夜更容易犯困，但仍保留随机性。
+            wait_min = max(
+                10,
+                round(wait_min * 0.45),
+            )
+            wait_max = max(
+                wait_min,
+                round(wait_max * 0.45),
+            )
+
         wait_seconds = random.randint(
-            self.settings["sleep_wait_min"],
-            self.settings["sleep_wait_max"],
+            wait_min,
+            wait_max,
         )
         self.sleep_wait_timer.start(
             wait_seconds * 1000
@@ -11147,6 +11506,13 @@ class DesktopPet(QLabel):
         self.speech_hide_timer.stop()
         self.speech_bubble.hide()
 
+        if self.is_late_night():
+            self.say(
+                random.choice(
+                    LATE_NIGHT_PRE_SLEEP_LINES
+                )
+            )
+
         self.state = "sleeping"
         self.sleep_frame_index = 0
         self.setPixmap(
@@ -11178,7 +11544,7 @@ class DesktopPet(QLabel):
             ]
         )
 
-    def wake_up(self):
+    def wake_up(self, human=False):
         debug_log(
             f"wake_up called state={self.state}"
         )
@@ -11192,6 +11558,13 @@ class DesktopPet(QLabel):
 
         self.state = "normal"
         self.setPixmap(self.normal)
+
+        if human:
+            self.set_recent_state(
+                "just_woke",
+                RECENT_WAKE_SECONDS,
+            )
+            self.record_close_interaction()
 
         # wake 动画期间只禁止“戳”，拖动仍然允许，
         # 并继续保持 wake 动画本身。
@@ -11242,7 +11615,9 @@ class DesktopPet(QLabel):
 
     def toggle_sleep(self):
         if self.state == "sleeping":
-            self.wake_up()
+            self.wake_up(
+                human=True
+            )
         else:
             self.start_sleeping()
 
@@ -11367,7 +11742,7 @@ class DesktopPet(QLabel):
             self,
         )
         speak_action.triggered.connect(
-            self.say_random_message
+            self.user_requested_speech
         )
 
         self.tray_mute_action = QAction(
@@ -12291,7 +12666,9 @@ class DesktopPet(QLabel):
                 elif self.state == "sleeping":
                     # 睡着时这一整个点击只负责叫醒。
                     self.click_woke_from_sleep = True
-                    self.wake_up()
+                    self.wake_up(
+                        human=True
+                    )
 
                 elif self.wake_input_locked:
                     # 醒来动画期间继续点击不触发 poke，
@@ -12412,7 +12789,7 @@ class DesktopPet(QLabel):
             self,
         )
         speak_action.triggered.connect(
-            self.say_random_message
+            self.user_requested_speech
         )
 
         mute_action = QAction(
