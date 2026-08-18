@@ -32,7 +32,7 @@
         "chocolate1.PNG",
         "chocolate2.PNG"
       ],
-      "fullness_gain": 6,
+      "fullness_gain": 10,
       "preference": "love",
       "reaction_lines": [
         "嘿嘿，甜甜的。",
@@ -47,7 +47,7 @@
         "fries1.PNG",
         "fries2.PNG"
       ],
-      "fullness_gain": 10,
+      "fullness_gain": 20,
       "preference": "love",
       "reaction_lines": [
         "热热脆脆的好好吃哦！",
@@ -62,7 +62,7 @@
         "hamburger1.PNG",
         "hamburger2.PNG"
       ],
-      "fullness_gain": 18,
+      "fullness_gain": 40,
       "preference": "love",
       "reaction_lines": [
         "汉堡香香！",
@@ -77,7 +77,7 @@
         "noodle1.PNG",
         "noodle2.PNG"
       ],
-      "fullness_gain": 16,
+      "fullness_gain": 50,
       "preference": "love",
       "reaction_lines": [
         "（吸溜吸溜）",
@@ -92,7 +92,7 @@
         "pizza1.PNG",
         "pizza2.PNG"
       ],
-      "fullness_gain": 15,
+      "fullness_gain": 50,
       "preference": "love",
       "reaction_lines": [
         "好——长的拉丝！",
@@ -107,7 +107,7 @@
         "sausage1.PNG",
         "sausage2.PNG"
       ],
-      "fullness_gain": 12,
+      "fullness_gain": 20,
       "preference": "love",
       "reaction_lines": [
         "这个肠好好吃哦！",
@@ -122,12 +122,12 @@
         "apple1.PNG",
         "apple2.PNG"
       ],
-      "fullness_gain": 5,
+      "fullness_gain": 10,
       "preference": "like",
       "reaction_lines": [
-        "脆脆甜甜的。",
-        "苹果也不错呀。",
-        "（咔嚓咔嚓）"
+        "脆脆甜甜的比较好。",
+        "为什么一下吃不完整个呢？",
+        "吃一半放在一边就会氧化捏……"
       ]
     },
     {
@@ -137,12 +137,12 @@
         "cucumber1.PNG",
         "cucumber2.PNG"
       ],
-      "fullness_gain": 3,
+      "fullness_gain": 10,
       "preference": "like",
       "reaction_lines": [
         "凉凉的，清清爽爽。",
-        "这个解腻。",
-        "（咔嚓）"
+        "皮能削掉就好了呀。",
+        "汁水流到下巴上了。"
       ]
     },
     {
@@ -152,12 +152,12 @@
         "milk1.PNG",
         "milk2.PNG"
       ],
-      "fullness_gain": 6,
+      "fullness_gain": 10,
       "preference": "like",
       "reaction_lines": [
-        "咕嘟咕嘟。",
-        "奶香香的。",
-        "这个顺口！"
+        "（咕嘟咕嘟）",
+        "我马上喝完！",
+        "果子喝这个能长高吗？"
       ]
     },
     {
@@ -167,12 +167,12 @@
         "pork1.PNG",
         "pork2.PNG"
       ],
-      "fullness_gain": 20,
+      "fullness_gain": 30,
       "preference": "like",
       "reaction_lines": [
-        "这个肉排好香哦！",
-        "外面脆脆，里面软软。",
-        "大口吃肉！"
+        "好大一块肉呀。",
+        "肥的部分有点腻呀。",
+        "（咯滋）"
       ]
     },
     {
@@ -182,11 +182,11 @@
         "eggplant1.PNG",
         "eggplant2.PNG"
       ],
-      "fullness_gain": 5,
+      "fullness_gain": 0,
       "preference": "dislike",
       "reaction_lines": [
-        "唔……能吃。",
-        "这个味道有点微妙。",
+        "唔……不要不要。",
+        "不想吃这个……",
         "我还是更想吃别的……"
       ]
     },
@@ -197,12 +197,12 @@
         "mushroom1.PNG",
         "mushroom2.PNG"
       ],
-      "fullness_gain": 4,
+      "fullness_gain": 0,
       "preference": "dislike",
       "reaction_lines": [
-        "这个口感怪怪的……",
-        "唔，不是很懂这个。",
-        "吃一口就行了吧……"
+        "呃啊无论如何都不要！",
+        "不吃不吃嘛……",
+        "味道太奇怪了呜……"
       ]
     }
   ]
