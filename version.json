@@ -1,6 +1,6 @@
 {
   "version": "5.45-time-and-recent-memory",
-  "app_version": 68,
+  "app_version": 69,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -49,7 +49,7 @@
     "soangry2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "80c903b64c5cef5c4b5d064619f36c243b98bb4938288b2ca50e7992ea22114f",
+  "app_sha256": "f0b42001400e382135c5319326f92ad76202fc96f8fc0b1205977f37b7631fa1",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
