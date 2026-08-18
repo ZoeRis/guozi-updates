@@ -69,7 +69,7 @@ ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 DEVELOPER_MARKER_FILE = APP_DIR / "developer.flag"
 
-APP_BUILD_VERSION = 69
+APP_BUILD_VERSION = 70
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -253,10 +253,6 @@ CLOSE_INTERACTION_WINDOW_SECONDS = 240
 CLOSE_INTERACTION_THRESHOLD = 3
 ANGRY_DURATION_SECONDS = 180
 
-POST_STROKE_NUZZLE_FRAME_MS = 300
-POST_STROKE_NUZZLE_LOOPS = 3
-POST_STROKE_NUZZLE_STEP_PX = 3.0
-
 SLEEP_FLIP_FRAME_MS = 340
 SLEEP_EAR_FRAME_MS = 300
 SLEEP_EVENT_WAIT_MIN_MS = 5000
@@ -275,14 +271,13 @@ EDGE_PEEK_CHANCE = 0.35
 BOTTOM_FLAT_CHANCE = 0.45
 
 BUILTIN_OPTIONAL_IMAGE_FILENAMES = (
-    "getclose1.PNG",
-    "getclose2.PNG",
     "flip1.PNG",
     "flip2-1.PNG",
     "flip2-2.PNG",
     "flip3-1.PNG",
     "flip3-2.PNG",
     "flip3-3.PNG",
+    "wake2.PNG",
     "flat1.PNG",
     "flat2.PNG",
     "hereleft1.PNG",
@@ -1059,8 +1054,6 @@ class DesktopPet(QLabel):
         self.stroke_comfy_frame_index = 0
         self.stroke_post_sequence = []
         self.stroke_post_index = 0
-        self.stroke_nuzzle_index = 0
-        self.stroke_nuzzle_frames_left = 0
 
         # 拖拽速度采样 / 松手惯性
         self.drag_motion_samples = []
@@ -1112,6 +1105,7 @@ class DesktopPet(QLabel):
         self.global_first_click_point = None
 
         self.sleep_frame_index = 0
+        self.sleep_flipped_frame_index = 0
         self.sleep_pose = "normal"
         self.sleep_special_kind = None
         self.sleep_special_sequence = []
@@ -1283,14 +1277,6 @@ class DesktopPet(QLabel):
         self.stroke_post_timer.setSingleShot(True)
         self.stroke_post_timer.timeout.connect(
             self.advance_stroke_post_sequence
-        )
-
-        self.stroke_nuzzle_timer = QTimer(self)
-        self.stroke_nuzzle_timer.setInterval(
-            POST_STROKE_NUZZLE_FRAME_MS
-        )
-        self.stroke_nuzzle_timer.timeout.connect(
-            self.advance_stroke_nuzzle
         )
 
         self.mouse_idle_timer = QTimer(self)
@@ -3783,14 +3769,6 @@ class DesktopPet(QLabel):
             self.soangry_frames
         )
 
-        self.getclose_frames = [
-            self.load_optional_image("getclose1.PNG"),
-            self.load_optional_image("getclose2.PNG"),
-        ]
-        self.getclose_frames_ready = all(
-            self.getclose_frames
-        )
-
         self.sleep_flip_frames = [
             self.load_optional_image("flip1.PNG"),
             self.load_optional_image("flip2-1.PNG"),
@@ -3799,9 +3777,14 @@ class DesktopPet(QLabel):
         self.sleep_flip_frames_ready = all(
             self.sleep_flip_frames
         )
-        self.sleep_flipped_base_frame = (
-            self.sleep_flip_frames[1]
+        self.sleep_flipped_frames = (
+            list(self.sleep_flip_frames[1:3])
             if self.sleep_flip_frames_ready
+            else []
+        )
+        self.sleep_flipped_base_frame = (
+            self.sleep_flipped_frames[0]
+            if self.sleep_flipped_frames
             else None
         )
 
@@ -3813,6 +3796,8 @@ class DesktopPet(QLabel):
         self.sleep_ear_frames_ready = all(
             self.sleep_ear_frames
         )
+
+        self.wake2 = self.load_optional_image("wake2.PNG")
 
         self.flat_frames = [
             self.load_optional_image("flat1.PNG"),
@@ -3895,6 +3880,7 @@ class DesktopPet(QLabel):
             self.sleep_special_sequence = []
             self.sleep_special_index = 0
             self.sleep_frame_index = 0
+            self.sleep_flipped_frame_index = 0
             self.setPixmap(
                 self.sleep_frames[
                     self.sleep_frame_index
@@ -6906,7 +6892,6 @@ class DesktopPet(QLabel):
             "sleeping": "睡觉中",
             "stroking": "正在被摸",
             "stroke_post": "正在讨摸",
-            "stroke_nuzzle": "正在蹭手",
             "happy": "开心",
             "custom_action": "在做动作",
             "dragging": "被提起来了",
@@ -6963,7 +6948,6 @@ class DesktopPet(QLabel):
         self.hunger_timer.stop()
         self.stroke_comfy_timer.stop()
         self.stroke_post_timer.stop()
-        self.stroke_nuzzle_timer.stop()
         self.edge_special_timer.stop()
         self.speech_hide_timer.stop()
         self.speech_bubble.hide()
@@ -8642,9 +8626,8 @@ class DesktopPet(QLabel):
         """暂停会干扰线上动作的其他行为。"""
 
         self.stroke_post_timer.stop()
-        self.stroke_nuzzle_timer.stop()
 
-        if self.state in ("stroke_post", "stroke_nuzzle"):
+        if self.state in ("stroke_post",):
             self.stroke_post_sequence = []
             self.stroke_post_index = 0
             self.state = "normal"
@@ -11734,7 +11717,6 @@ class DesktopPet(QLabel):
 
         self.stroke_comfy_timer.stop()
         self.stroke_post_timer.stop()
-        self.stroke_nuzzle_timer.stop()
         self.stroke_post_sequence = []
         self.stroke_post_index = 0
 
@@ -11863,78 +11845,14 @@ class DesktopPet(QLabel):
             self.stroke_post_timer.stop()
             self.stroke_post_sequence = []
             self.stroke_post_index = 0
-            self.start_stroke_nuzzle()
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.resume_after_stroking()
             return
 
         frame, duration = self.stroke_post_sequence[self.stroke_post_index]
         self.setPixmap(frame)
         self.stroke_post_timer.start(int(duration))
-
-    def start_stroke_nuzzle(self):
-        """讨摸动画后主动蹭两下手，并向鼠标轻轻靠近。"""
-
-        if not self.getclose_frames_ready:
-            self.state = "normal"
-            self.setPixmap(self.normal)
-            self.resume_after_stroking()
-            return
-
-        self.state = "stroke_nuzzle"
-        self.stroke_nuzzle_index = 0
-        self.stroke_nuzzle_frames_left = (
-            len(self.getclose_frames)
-            * POST_STROKE_NUZZLE_LOOPS
-        )
-        self.setPixmap(self.getclose_frames[0])
-        self.stroke_nuzzle_index = 1
-        self.stroke_nuzzle_frames_left -= 1
-        self.stroke_nuzzle_timer.start()
-        debug_log("stroke nuzzle start")
-
-    def nudge_toward_cursor(self):
-        cursor = QPoint(QCursor.pos())
-        center = self.frameGeometry().center()
-        dx = cursor.x() - center.x()
-        dy = cursor.y() - center.y()
-        distance = math.hypot(dx, dy)
-
-        # 只做很轻的靠近。鼠标已经跑很远时不追过去。
-        if distance < 4 or distance > 420:
-            return
-
-        step = min(
-            POST_STROKE_NUZZLE_STEP_PX,
-            distance,
-        )
-        target_x = self.x() + dx / distance * step
-        target_y = self.y() + dy / distance * step
-        self.move_to_safe_position(
-            round(target_x),
-            round(target_y),
-        )
-
-    def advance_stroke_nuzzle(self):
-        if self.state != "stroke_nuzzle":
-            self.stroke_nuzzle_timer.stop()
-            return
-
-        self.nudge_toward_cursor()
-
-        if self.stroke_nuzzle_frames_left <= 0:
-            self.stroke_nuzzle_timer.stop()
-            self.state = "normal"
-            self.setPixmap(self.normal)
-            self.save_position()
-            self.resume_after_stroking()
-            return
-
-        frame = self.getclose_frames[
-            self.stroke_nuzzle_index
-            % len(self.getclose_frames)
-        ]
-        self.setPixmap(frame)
-        self.stroke_nuzzle_index += 1
-        self.stroke_nuzzle_frames_left -= 1
 
     def resume_after_stroking(self):
         """抚摸/讨摸动画结束后恢复自动行为。"""
@@ -12380,6 +12298,7 @@ class DesktopPet(QLabel):
         self.sleep_event_timer.stop()
         self.sleep_dream_timer.stop()
         self.sleep_frame_index = 0
+        self.sleep_flipped_frame_index = 0
         self.setPixmap(
             self.sleep_frames[
                 self.sleep_frame_index
@@ -12444,25 +12363,32 @@ class DesktopPet(QLabel):
             self.start_sleep_flip_event()
             return
 
-        if (
-            self.sleep_pose == "flipped"
-            and self.sleep_ear_frames_ready
-            and random.random() < 0.58
-        ):
-            self.start_sleep_ear_event()
-            return
+        if self.sleep_pose == "flipped":
+            roll = random.random()
+
+            # 背对着睡一会儿后，可能翻回来，也可能动动耳朵。
+            if self.sleep_flip_frames_ready and roll < 0.34:
+                self.start_sleep_unflip_event()
+                return
+
+            if self.sleep_ear_frames_ready and roll < 0.72:
+                self.start_sleep_ear_event()
+                return
 
         self.schedule_sleep_random_event()
 
     def start_sleep_flip_event(self):
+        """从正面睡姿翻到背面。"""
+
         if (
             self.state != "sleeping"
+            or self.sleep_pose != "normal"
             or not self.sleep_flip_frames_ready
         ):
             return False
 
         self.sleep_animation_timer.stop()
-        self.sleep_special_kind = "flip"
+        self.sleep_special_kind = "flip_to_back"
         self.sleep_special_sequence = [
             (self.sleep_flip_frames[0], SLEEP_FLIP_FRAME_MS),
             (self.sleep_flip_frames[1], SLEEP_FLIP_FRAME_MS),
@@ -12474,16 +12400,39 @@ class DesktopPet(QLabel):
         self.sleep_special_timer.start(duration)
         return True
 
+    def start_sleep_unflip_event(self):
+        """背对着睡时按翻身动作倒序翻回正面。"""
+
+        if (
+            self.state != "sleeping"
+            or self.sleep_pose != "flipped"
+            or not self.sleep_flip_frames_ready
+        ):
+            return False
+
+        self.sleep_animation_timer.stop()
+        self.sleep_special_kind = "flip_to_front"
+        self.sleep_special_sequence = [
+            (self.sleep_flip_frames[2], SLEEP_FLIP_FRAME_MS),
+            (self.sleep_flip_frames[1], SLEEP_FLIP_FRAME_MS),
+            (self.sleep_flip_frames[0], SLEEP_FLIP_FRAME_MS),
+        ]
+        self.sleep_special_index = 0
+        frame, duration = self.sleep_special_sequence[0]
+        self.setPixmap(frame)
+        self.sleep_special_timer.start(duration)
+        return True
+
     def start_sleep_ear_event(self):
         if (
             self.state != "sleeping"
+            or self.sleep_pose != "flipped"
             or not self.sleep_ear_frames_ready
             or self.sleep_flipped_base_frame is None
         ):
             return False
 
         self.sleep_animation_timer.stop()
-        self.sleep_pose = "flipped"
         self.sleep_special_kind = "ear"
         self.sleep_special_sequence = [
             (frame, SLEEP_EAR_FRAME_MS)
@@ -12495,42 +12444,46 @@ class DesktopPet(QLabel):
         self.sleep_special_timer.start(duration)
         return True
 
+    def resume_sleep_breathing(self):
+        """特殊睡眠动作结束后继续当前朝向的呼吸循环。"""
+
+        if self.state != "sleeping":
+            return
+
+        if self.sleep_pose == "flipped" and self.sleep_flipped_frames:
+            self.sleep_flipped_frame_index = 0
+            self.setPixmap(self.sleep_flipped_frames[0])
+        else:
+            self.sleep_pose = "normal"
+            self.sleep_frame_index = 0
+            self.setPixmap(self.sleep_frames[0])
+
+        # 正面 sleep1/2 与背面 flip2-1/2 共用同一个 timer，
+        # 所以呼吸速度完全一致。
+        self.sleep_animation_timer.start()
+
     def advance_sleep_special(self):
         if self.state != "sleeping":
             self.sleep_special_timer.stop()
             return
 
         self.sleep_special_index += 1
-        if self.sleep_special_index >= len(
-            self.sleep_special_sequence
-        ):
+        if self.sleep_special_index >= len(self.sleep_special_sequence):
             finished_kind = self.sleep_special_kind
             self.sleep_special_sequence = []
             self.sleep_special_index = 0
             self.sleep_special_kind = None
 
-            if finished_kind == "flip":
+            if finished_kind == "flip_to_back":
                 self.sleep_pose = "flipped"
-                self.setPixmap(
-                    self.sleep_flipped_base_frame
-                )
-            elif self.sleep_pose == "flipped":
-                self.setPixmap(
-                    self.sleep_flipped_base_frame
-                )
-            else:
-                self.sleep_frame_index = 0
-                self.setPixmap(
-                    self.sleep_frames[0]
-                )
-                self.sleep_animation_timer.start()
+            elif finished_kind == "flip_to_front":
+                self.sleep_pose = "normal"
 
+            self.resume_sleep_breathing()
             self.schedule_sleep_random_event()
             return
 
-        frame, duration = self.sleep_special_sequence[
-            self.sleep_special_index
-        ]
+        frame, duration = self.sleep_special_sequence[self.sleep_special_index]
         self.setPixmap(frame)
         self.sleep_special_timer.start(duration)
 
@@ -12539,19 +12492,37 @@ class DesktopPet(QLabel):
             self.sleep_animation_timer.stop()
             return
 
-        if self.sleep_pose != "normal" or self.sleep_special_sequence:
+        if self.sleep_special_sequence:
             self.sleep_animation_timer.stop()
             return
 
+        if self.sleep_pose == "flipped" and self.sleep_flipped_frames:
+            self.sleep_flipped_frame_index = (
+                self.sleep_flipped_frame_index + 1
+            ) % len(self.sleep_flipped_frames)
+            self.setPixmap(
+                self.sleep_flipped_frames[self.sleep_flipped_frame_index]
+            )
+            return
+
+        self.sleep_pose = "normal"
         self.sleep_frame_index = (
             self.sleep_frame_index + 1
         ) % len(self.sleep_frames)
+        self.setPixmap(self.sleep_frames[self.sleep_frame_index])
 
-        self.setPixmap(
-            self.sleep_frames[
-                self.sleep_frame_index
-            ]
-        )
+    def sleep_currently_back_facing(self):
+        """判断醒来的这一刻画面是否已经处在背面睡姿。"""
+
+        if self.sleep_pose == "flipped":
+            if self.sleep_special_kind == "flip_to_front":
+                return self.sleep_special_index < 2
+            return True
+
+        if self.sleep_special_kind == "flip_to_back":
+            return self.sleep_special_index >= 1
+
+        return False
 
     def wake_up(self, human=False):
         debug_log(
@@ -12560,6 +12531,8 @@ class DesktopPet(QLabel):
 
         if self.state != "sleeping":
             return
+
+        was_back_facing = self.sleep_currently_back_facing()
 
         self.sleep_duration_timer.stop()
         self.sleep_animation_timer.stop()
@@ -12570,6 +12543,7 @@ class DesktopPet(QLabel):
         self.sleep_special_index = 0
         self.sleep_special_kind = None
         self.sleep_pose = "normal"
+        self.sleep_flipped_frame_index = 0
         self.sleep_zzz.stop_animation()
 
         self.state = "normal"
@@ -12582,20 +12556,35 @@ class DesktopPet(QLabel):
             )
             self.record_close_interaction()
 
-        # wake 动画期间只禁止“戳”，拖动仍然允许，
-        # 并继续保持 wake 动画本身。
+        # 醒来动画期间只禁止“戳”，拖动仍然允许。
         self.wake_input_locked = True
 
+        # 背对着醒来使用用户新画的 wake2 单帧。
+        if was_back_facing and self.wake2 is not None:
+            self.setPixmap(self.wake2)
+            self.say(
+                random.choice(
+                    [
+                        "睡醒啦！",
+                        "果子醒来啦。",
+                        "又精神了耶！",
+                    ]
+                )
+            )
+            QTimer.singleShot(1500, self.finish_fallback_wake)
+            self.update_menu_text()
+            return
+
+        # 面朝前时完全沿用原本的 wake 动作。
         if self.play_trigger_action("wake"):
             self.update_menu_text()
             return
 
         self.wake_input_locked = False
 
-        # 线上 wake 动作若暂时缺失，也使用专门的醒来表现，
-        # 不再回退成 happy / “耶嘿！”。
+        # 原 wake 资源暂时缺失时安全回到 normal。
         self.state = "normal"
-        self.setPixmap(self.wake)
+        self.setPixmap(self.normal)
         self.say(
             random.choice(
                 [
@@ -12605,12 +12594,7 @@ class DesktopPet(QLabel):
                 ]
             )
         )
-
-        QTimer.singleShot(
-            1500,
-            self.finish_fallback_wake,
-        )
-
+        QTimer.singleShot(1500, self.finish_fallback_wake)
         self.update_menu_text()
 
     def finish_fallback_wake(self):
@@ -13758,6 +13742,7 @@ class DesktopPet(QLabel):
             self.sleep_zzz.stop_animation()
             self.state = "normal"
             self.sleep_pose = "normal"
+            self.sleep_flipped_frame_index = 0
             self.setPixmap(self.normal)
         if self.state == "custom_action":
             self.stop_custom_action(resume=False)
@@ -13841,15 +13826,28 @@ class DesktopPet(QLabel):
         self.developer_ensure_sleeping()
         self.start_sleep_flip_event()
 
-    def developer_test_sleep_ear(self):
+    def developer_set_flipped_sleep(self):
         self.developer_ensure_sleeping()
-        if self.sleep_flipped_base_frame is None:
+        if not self.sleep_flipped_frames:
             self.say("翻身图片还没有准备好。")
-            return
-        self.sleep_animation_timer.stop()
+            return False
         self.sleep_pose = "flipped"
-        self.setPixmap(self.sleep_flipped_base_frame)
-        self.start_sleep_ear_event()
+        self.sleep_special_sequence = []
+        self.sleep_special_kind = None
+        self.resume_sleep_breathing()
+        return True
+
+    def developer_test_sleep_unflip(self):
+        if self.developer_set_flipped_sleep():
+            self.start_sleep_unflip_event()
+
+    def developer_test_sleep_ear(self):
+        if self.developer_set_flipped_sleep():
+            self.start_sleep_ear_event()
+
+    def developer_test_wake2(self):
+        if self.developer_set_flipped_sleep():
+            self.wake_up(human=True)
 
     def add_developer_test_menu(self, menu):
         if not self.developer_mode_enabled():
@@ -13867,7 +13865,9 @@ class DesktopPet(QLabel):
             ("解除记仇", lambda: self.finish_angry_state(force=True)),
             ("偷看鼠标", lambda: self.developer_play_first_trigger("mouse_idle")),
             ("睡觉翻身", self.developer_test_sleep_flip),
+            ("睡觉翻回来", self.developer_test_sleep_unflip),
             ("睡觉动耳朵", self.developer_test_sleep_ear),
+            ("背对着醒来 / wake2", self.developer_test_wake2),
             ("趴屏幕底部", lambda: (self.prepare_developer_test(), self.start_bottom_flat(force=True))),
             ("左边探头", lambda: (self.prepare_developer_test(), self.start_side_peek(-1, force=True))),
             ("右边探头", lambda: (self.prepare_developer_test(), self.start_side_peek(1, force=True))),
@@ -14080,7 +14080,6 @@ class DesktopPet(QLabel):
 
         self.stroke_comfy_timer.stop()
         self.stroke_post_timer.stop()
-        self.stroke_nuzzle_timer.stop()
         self.angry_animation_timer.stop()
         self.angry_end_timer.stop()
         self.edge_special_timer.stop()
@@ -14127,7 +14126,6 @@ class DesktopPet(QLabel):
         self.hunger_timer.stop()
         self.speech_bubble.hide()
         self.pet_status_widget.hide()
-        self.stroke_nuzzle_timer.stop()
         self.angry_animation_timer.stop()
         self.angry_end_timer.stop()
         self.edge_special_timer.stop()
