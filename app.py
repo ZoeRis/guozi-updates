@@ -67,8 +67,9 @@ RESOURCE_STATE_FILE = APP_DIR / "resource_state.json"
 ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
+DEVELOPER_MARKER_FILE = APP_DIR / "developer.flag"
 
-APP_BUILD_VERSION = 68
+APP_BUILD_VERSION = 69
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -250,6 +251,47 @@ RECENT_WAKE_SECONDS = 180
 RECENT_CLOSE_SECONDS = 300
 CLOSE_INTERACTION_WINDOW_SECONDS = 240
 CLOSE_INTERACTION_THRESHOLD = 3
+ANGRY_DURATION_SECONDS = 180
+
+POST_STROKE_NUZZLE_FRAME_MS = 300
+POST_STROKE_NUZZLE_LOOPS = 3
+POST_STROKE_NUZZLE_STEP_PX = 3.0
+
+SLEEP_FLIP_FRAME_MS = 340
+SLEEP_EAR_FRAME_MS = 300
+SLEEP_EVENT_WAIT_MIN_MS = 5000
+SLEEP_EVENT_WAIT_MAX_MS = 12000
+SLEEP_DREAM_WAIT_MIN_MS = 7000
+SLEEP_DREAM_WAIT_MAX_MS = 16000
+SLEEP_DREAM_LINES = [
+    "好吃的......",
+    "不要一直戳我啦......",
+    "呼......呼......",
+]
+
+EDGE_PEEK_FRAME_MS = 280
+EDGE_PEEK_HOLD_MS = 700
+EDGE_PEEK_CHANCE = 0.35
+BOTTOM_FLAT_CHANCE = 0.45
+
+BUILTIN_OPTIONAL_IMAGE_FILENAMES = (
+    "getclose1.PNG",
+    "getclose2.PNG",
+    "flip1.PNG",
+    "flip2-1.PNG",
+    "flip2-2.PNG",
+    "flip3-1.PNG",
+    "flip3-2.PNG",
+    "flip3-3.PNG",
+    "flat1.PNG",
+    "flat2.PNG",
+    "hereleft1.PNG",
+    "hereleft2.PNG",
+    "hereleft3.PNG",
+    "hereright1.PNG",
+    "hereright2.PNG",
+    "hereright3.PNG",
+)
 
 LATE_NIGHT_LINES = [
     "你还不睡觉吗？",
@@ -838,6 +880,64 @@ class UpdateStatusWidget(QWidget):
             )
 
 
+class PetStatusWidget(QWidget):
+    """右键“状态”使用的小面板，不依赖额外图片。"""
+
+    def __init__(self):
+        super().__init__()
+        self.lines = []
+        self.setFixedSize(360, 156)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground
+        )
+        self.hide()
+
+    def set_lines(self, lines):
+        self.lines = [str(line) for line in lines[:4]]
+        self.update()
+
+    def mousePressEvent(self, event):
+        self.hide()
+        event.accept()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(
+            QPainter.RenderHint.Antialiasing,
+            True,
+        )
+
+        rect = QRectF(
+            2,
+            2,
+            self.width() - 4,
+            self.height() - 4,
+        )
+        painter.setPen(
+            QPen(QColor("#6b514a"), 2)
+        )
+        painter.setBrush(
+            QColor(255, 255, 255, 247)
+        )
+        painter.drawRoundedRect(rect, 18, 18)
+
+        font = QFont("Microsoft YaHei", 10)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#3b2d2a"))
+
+        y = 34
+        for line in self.lines:
+            painter.drawText(22, y, line)
+            y += 30
+
+
 class DesktopPet(QLabel):
 
     online_update_ready = Signal(object)
@@ -914,6 +1014,11 @@ class DesktopPet(QLabel):
         self.recent_state_until = {}
         self.close_interaction_times = []
 
+        # “气呼呼”是短时锁定状态。期间只保留 soangry 动画，
+        # 用户仍可拖动位置；180 秒后自动恢复。
+        self.angry_until = 0.0
+        self.angry_frame_index = 0
+
         # 连戳循环：
         # 第 1 组三下 -> “你怎么还戳呀”
         # 第 2 组三下 -> “还戳！我跑啦！”
@@ -954,6 +1059,8 @@ class DesktopPet(QLabel):
         self.stroke_comfy_frame_index = 0
         self.stroke_post_sequence = []
         self.stroke_post_index = 0
+        self.stroke_nuzzle_index = 0
+        self.stroke_nuzzle_frames_left = 0
 
         # 拖拽速度采样 / 松手惯性
         self.drag_motion_samples = []
@@ -984,6 +1091,12 @@ class DesktopPet(QLabel):
         self.edge_crawl_side = 0
         self.edge_crawl_direction = 0
 
+        # 屏幕边缘的小动作：左右探头 / 屏幕底部趴平。
+        self.edge_special_kind = None
+        self.edge_special_side = 0
+        self.edge_special_sequence = []
+        self.edge_special_index = 0
+
         # 横向散步里大部分会专门走到最近的屏幕边缘，
         # 这样爬墙动作不会只能靠偶然撞墙才能触发。
         self.horizontal_walk_to_edge = False
@@ -991,6 +1104,7 @@ class DesktopPet(QLabel):
         self.full_screen_edge_side = 0
 
         self.summon_run_active = False
+        self.summon_arrival_callback = None
         self.global_left_was_down = False
         self.global_pending_click_point = None
         self.global_pending_click_native = None
@@ -998,6 +1112,10 @@ class DesktopPet(QLabel):
         self.global_first_click_point = None
 
         self.sleep_frame_index = 0
+        self.sleep_pose = "normal"
+        self.sleep_special_kind = None
+        self.sleep_special_sequence = []
+        self.sleep_special_index = 0
         self.drag_frame_index = 0
 
         # 松开拖动后的轻微回弹
@@ -1046,6 +1164,7 @@ class DesktopPet(QLabel):
         self.speech_bubble = SpeechBubble()
         self.sleep_zzz = SleepZzzWidget()
         self.update_status_widget = UpdateStatusWidget()
+        self.pet_status_widget = PetStatusWidget()
 
         self.update_status_hide_timer = QTimer(self)
         self.update_status_hide_timer.setSingleShot(True)
@@ -1140,6 +1259,18 @@ class DesktopPet(QLabel):
             self.try_random_action
         )
 
+        self.angry_animation_timer = QTimer(self)
+        self.angry_animation_timer.setInterval(240)
+        self.angry_animation_timer.timeout.connect(
+            self.update_angry_frame
+        )
+
+        self.angry_end_timer = QTimer(self)
+        self.angry_end_timer.setSingleShot(True)
+        self.angry_end_timer.timeout.connect(
+            self.finish_angry_state
+        )
+
         self.stroke_comfy_timer = QTimer(self)
         self.stroke_comfy_timer.setInterval(
             STROKE_COMFY_FRAME_INTERVAL_MS
@@ -1152,6 +1283,14 @@ class DesktopPet(QLabel):
         self.stroke_post_timer.setSingleShot(True)
         self.stroke_post_timer.timeout.connect(
             self.advance_stroke_post_sequence
+        )
+
+        self.stroke_nuzzle_timer = QTimer(self)
+        self.stroke_nuzzle_timer.setInterval(
+            POST_STROKE_NUZZLE_FRAME_MS
+        )
+        self.stroke_nuzzle_timer.timeout.connect(
+            self.advance_stroke_nuzzle
         )
 
         self.mouse_idle_timer = QTimer(self)
@@ -1207,6 +1346,12 @@ class DesktopPet(QLabel):
             self.update_walk_frame
         )
 
+        self.edge_special_timer = QTimer(self)
+        self.edge_special_timer.setSingleShot(True)
+        self.edge_special_timer.timeout.connect(
+            self.advance_edge_special
+        )
+
         # ---------- 拖动动画 ----------
 
         self.drag_animation_timer = QTimer(self)
@@ -1258,6 +1403,24 @@ class DesktopPet(QLabel):
         self.sleep_animation_timer = QTimer(self)
         self.sleep_animation_timer.timeout.connect(
             self.update_sleep_frame
+        )
+
+        self.sleep_special_timer = QTimer(self)
+        self.sleep_special_timer.setSingleShot(True)
+        self.sleep_special_timer.timeout.connect(
+            self.advance_sleep_special
+        )
+
+        self.sleep_event_timer = QTimer(self)
+        self.sleep_event_timer.setSingleShot(True)
+        self.sleep_event_timer.timeout.connect(
+            self.try_sleep_random_event
+        )
+
+        self.sleep_dream_timer = QTimer(self)
+        self.sleep_dream_timer.setSingleShot(True)
+        self.sleep_dream_timer.timeout.connect(
+            self.try_sleep_dream_talk
         )
         self.apply_timer_settings()
 
@@ -3078,6 +3241,9 @@ class DesktopPet(QLabel):
     def use_digest_magic(self):
         """瞬间清空饱食度，方便继续测试 / 喂食。"""
 
+        if self.state == "angry":
+            return
+
         self.fullness = 0
         self.fullness_updated_at = time.time()
         self.save_pet_state()
@@ -3106,7 +3272,10 @@ class DesktopPet(QLabel):
     def can_feed_now(self):
         """喂食菜单是否可以响应；在线更新不会阻止喂食。"""
 
-        return not self.is_dragging
+        return (
+            not self.is_dragging
+            and self.state != "angry"
+        )
 
     def food_reaction_frames(
         self,
@@ -3137,6 +3306,9 @@ class DesktopPet(QLabel):
 
     def start_feeding(self, food):
         """从菜单触发一次喂食。"""
+
+        if self.state == "angry":
+            return
 
         if not isinstance(food, dict):
             return
@@ -3295,6 +3467,13 @@ class DesktopPet(QLabel):
 
         self.schedule_hunger_reaction()
 
+        # 行为联动只需要知道“刚吃过东西”；喜欢的食物仍继续使用 fed
+        # 来驱动原本那些更开心的吃后台词。
+        self.set_recent_state(
+            "ate",
+            RECENT_FED_SECONDS,
+        )
+
         if food.get(
             "preference"
         ) in (
@@ -3365,9 +3544,11 @@ class DesktopPet(QLabel):
 
     def add_foods_to_menu(self, menu):
         foods_menu = menu.addMenu("喂果子")
+        foods_menu.setEnabled(self.state != "angry")
         self.populate_food_menu(
             foods_menu
         )
+        return foods_menu
 
     def refresh_tray_foods_menu(self):
         if not hasattr(
@@ -3602,6 +3783,60 @@ class DesktopPet(QLabel):
             self.soangry_frames
         )
 
+        self.getclose_frames = [
+            self.load_optional_image("getclose1.PNG"),
+            self.load_optional_image("getclose2.PNG"),
+        ]
+        self.getclose_frames_ready = all(
+            self.getclose_frames
+        )
+
+        self.sleep_flip_frames = [
+            self.load_optional_image("flip1.PNG"),
+            self.load_optional_image("flip2-1.PNG"),
+            self.load_optional_image("flip2-2.PNG"),
+        ]
+        self.sleep_flip_frames_ready = all(
+            self.sleep_flip_frames
+        )
+        self.sleep_flipped_base_frame = (
+            self.sleep_flip_frames[1]
+            if self.sleep_flip_frames_ready
+            else None
+        )
+
+        self.sleep_ear_frames = [
+            self.load_optional_image("flip3-1.PNG"),
+            self.load_optional_image("flip3-2.PNG"),
+            self.load_optional_image("flip3-3.PNG"),
+        ]
+        self.sleep_ear_frames_ready = all(
+            self.sleep_ear_frames
+        )
+
+        self.flat_frames = [
+            self.load_optional_image("flat1.PNG"),
+            self.load_optional_image("flat2.PNG"),
+        ]
+        self.flat_frames_ready = all(
+            self.flat_frames
+        )
+
+        left_peek = [
+            self.load_optional_image("hereleft1.PNG"),
+            self.load_optional_image("hereleft2.PNG"),
+            self.load_optional_image("hereleft3.PNG"),
+        ]
+        right_peek = [
+            self.load_optional_image("hereright1.PNG"),
+            self.load_optional_image("hereright2.PNG"),
+            self.load_optional_image("hereright3.PNG"),
+        ]
+        self.edge_peek_frames = {
+            -1: left_peek if all(left_peek) else None,
+            1: right_peek if all(right_peek) else None,
+        }
+
     def apply_timer_settings(self):
         self.sleep_animation_timer.setInterval(
             self.settings["sleep_frame_interval"]
@@ -3655,15 +3890,22 @@ class DesktopPet(QLabel):
         )
 
         if was_sleeping:
+            self.sleep_pose = "normal"
+            self.sleep_special_kind = None
+            self.sleep_special_sequence = []
+            self.sleep_special_index = 0
             self.sleep_frame_index = 0
             self.setPixmap(
                 self.sleep_frames[
                     self.sleep_frame_index
                 ]
             )
+            self.sleep_animation_timer.start()
             self.position_sleep_zzz()
             self.sleep_zzz.start_animation()
             self.schedule_auto_wake()
+            self.schedule_sleep_random_event()
+            self.schedule_sleep_dream()
         else:
             self.state = "normal"
             self.setPixmap(self.normal)
@@ -3990,6 +4232,10 @@ class DesktopPet(QLabel):
                     "核心图片文件名不安全。"
                 )
 
+            if filename not in filenames:
+                filenames.append(filename)
+
+        for filename in BUILTIN_OPTIONAL_IMAGE_FILENAMES:
             if filename not in filenames:
                 filenames.append(filename)
 
@@ -6315,6 +6561,11 @@ class DesktopPet(QLabel):
                 self.update_status_widget
             )
 
+        if self.pet_status_widget.isVisible():
+            keep_widget_topmost(
+                self.pet_status_widget
+            )
+
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(
@@ -6614,8 +6865,229 @@ class DesktopPet(QLabel):
 
         return []
 
+    def current_recent_label(self):
+        if self.state == "angry":
+            return "刚被连续戳过"
+        if self.recent_state_active("just_woke"):
+            return "刚睡醒"
+        if self.recent_state_active("comfy"):
+            return "刚被摸得很舒服"
+        if (
+            self.recent_state_active("fed")
+            or self.recent_state_active("ate")
+        ):
+            return "刚吃过东西"
+        if self.recent_state_active("close"):
+            return "刚和你玩了很久"
+        if self.recent_state_active("grudge"):
+            return "还记得刚才被戳"
+        return "暂无特别的事"
+
+    def current_mood_label(self):
+        if self.state == "angry":
+            return "气呼呼"
+        if self.recent_state_active("comfy"):
+            return "被摸得很开心"
+        if (
+            self.recent_state_active("fed")
+            or self.recent_state_active("ate")
+        ):
+            return "吃饱了，很满足"
+        if self.recent_state_active("close"):
+            return "想和你玩"
+        if self.fullness <= 10:
+            return "有点饿"
+        return "平静"
+
+    def current_state_label(self):
+        state_names = {
+            "normal": "待着",
+            "walking": "散步中",
+            "sleeping": "睡觉中",
+            "stroking": "正在被摸",
+            "stroke_post": "正在讨摸",
+            "stroke_nuzzle": "正在蹭手",
+            "happy": "开心",
+            "custom_action": "在做动作",
+            "dragging": "被提起来了",
+            "bouncing": "刚落地",
+            "inertial": "正在滑出去",
+            "edge_special": "在屏幕边玩",
+            "angry": "生气中",
+        }
+        return state_names.get(self.state, self.state)
+
+    def show_pet_status(self):
+        self.apply_fullness_decay()
+        self.pet_status_widget.set_lines(
+            [
+                f"饱食度：{self.fullness} / {self.max_fullness}",
+                f"状态：{self.current_state_label()}",
+                f"最近：{self.current_recent_label()}",
+                f"心情：{self.current_mood_label()}",
+            ]
+        )
+        self.position_pet_status_widget()
+        self.pet_status_widget.show()
+        self.pet_status_widget.raise_()
+        self.keep_all_windows_on_top()
+
+    def enter_angry_state(self, duration_seconds=ANGRY_DURATION_SECONDS):
+        """进入 soangry 锁定：只播放生气动画，拖动位置仍允许。"""
+
+        if not self.soangry_frames_ready:
+            return False
+
+        if self.is_dragging:
+            return False
+
+        self.stop_custom_action(resume=False)
+        self.stop_walk_timers()
+        self.cancel_release_bounce()
+        self.cancel_drag_inertia(trigger_landing=False)
+        self.single_click_timer.stop()
+        self.poke_cooldown_timer.stop()
+        self.poke_inactivity_timer.stop()
+        self.blink_wait_timer.stop()
+        self.blink_close_timer.stop()
+        self.happy_timer.stop()
+        self.auto_speech_timer.stop()
+        self.random_action_timer.stop()
+        self.sleep_wait_timer.stop()
+        self.sleep_duration_timer.stop()
+        self.sleep_animation_timer.stop()
+        self.sleep_special_timer.stop()
+        self.sleep_event_timer.stop()
+        self.sleep_dream_timer.stop()
+        self.sleep_zzz.stop_animation()
+        self.hunger_timer.stop()
+        self.stroke_comfy_timer.stop()
+        self.stroke_post_timer.stop()
+        self.stroke_nuzzle_timer.stop()
+        self.edge_special_timer.stop()
+        self.speech_hide_timer.stop()
+        self.speech_bubble.hide()
+
+        self.is_stroking = False
+        self.stroke_candidate = False
+        self.poke_input_locked = False
+        self.wake_input_locked = False
+        self.reset_poke_cycle()
+
+        self.state = "angry"
+        self.angry_frame_index = 0
+        self.angry_until = (
+            time.monotonic()
+            + max(1.0, float(duration_seconds))
+        )
+        self.setPixmap(self.soangry_frames[0])
+        self.angry_animation_timer.start()
+        self.angry_end_timer.start(
+            int(max(1.0, float(duration_seconds)) * 1000)
+        )
+        self.update_menu_text()
+        debug_log(
+            f"angry state start duration={duration_seconds}s"
+        )
+        return True
+
+    def update_angry_frame(self):
+        if self.state != "angry":
+            self.angry_animation_timer.stop()
+            return
+        self.angry_frame_index = (
+            self.angry_frame_index + 1
+        ) % len(self.soangry_frames)
+        self.setPixmap(
+            self.soangry_frames[self.angry_frame_index]
+        )
+
+    def finish_angry_state(self, force=False):
+        if self.state != "angry":
+            self.angry_animation_timer.stop()
+            self.angry_end_timer.stop()
+            return False
+
+        if (
+            not force
+            and time.monotonic() < self.angry_until
+        ):
+            remaining = max(
+                1,
+                round(
+                    (self.angry_until - time.monotonic())
+                    * 1000
+                ),
+            )
+            self.angry_end_timer.start(remaining)
+            return False
+
+        self.angry_animation_timer.stop()
+        self.angry_end_timer.stop()
+        self.angry_until = 0.0
+        self.recent_state_until.pop("grudge", None)
+        self.state = "normal"
+        self.setPixmap(self.normal)
+        self.resume_normal_schedules()
+        self.schedule_hunger_reaction()
+        self.update_menu_text()
+        self.try_apply_pending_online_update()
+        debug_log("angry state finished")
+        return True
+
+    def play_recent_preferred_random_action(self):
+        """近期互动只改变已有随机动作的倾向，不新增心情数值。"""
+
+        preferred_names = []
+        if self.recent_state_active("comfy"):
+            preferred_names.extend(
+                ["发呆", "打盹", "开心摇摆"]
+            )
+        if (
+            self.recent_state_active("fed")
+            or self.recent_state_active("ate")
+        ):
+            preferred_names.extend(
+                ["理毛", "打盹"]
+            )
+
+        if not preferred_names or random.random() >= 0.65:
+            return False
+
+        now = time.monotonic()
+        candidates = []
+        for action in self.actions:
+            if (
+                action.get("name") not in preferred_names
+                or "random" not in action.get("triggers", [])
+                or not self.action_is_off_cooldown(
+                    action,
+                    "random",
+                    now,
+                )
+            ):
+                continue
+
+            chance = float(action.get("chance", 100))
+            if random.random() * 100 > chance:
+                continue
+            candidates.append(action)
+
+        action = self.choose_weighted_action(candidates)
+        if action is None:
+            return False
+
+        self.action_last_triggered[
+            self.action_trigger_key(action, "random")
+        ] = now
+        self.play_custom_action(
+            action,
+            trigger_name="random",
+        )
+        return True
+
     def try_recent_grudge_reaction(self):
-        """刚被连续戳过后，再来戳时偶尔闹一下别扭。"""
+        """刚被连续戳过后，再来戳时偶尔进入 180 秒 soangry。"""
 
         if (
             not self.recent_state_active(
@@ -6631,37 +7103,9 @@ class DesktopPet(QLabel):
         ):
             return False
 
-        steps = [
-            {
-                "type": "say",
-                "texts": list(
-                    GRUDGE_LINES
-                ),
-            }
-        ]
-
-        if self.soangry_frames_ready:
-            steps.append(
-                {
-                    "type": "frames",
-                    "frames": [
-                        "soangry1.PNG",
-                        "soangry2.PNG",
-                    ],
-                    "frame_interval": 240,
-                    "loops": 3,
-                    "playback": "loop",
-                }
-            )
-
-        self.play_custom_action(
-            {
-                "name": "短暂记仇",
-                "steps": steps,
-            },
-            trigger_name="recent_grudge",
+        return self.enter_angry_state(
+            ANGRY_DURATION_SECONDS
         )
-        return True
 
     def play_midday_sleepy_action(self):
         """中午偶尔优先打哈欠/打盹，仍尊重各自动作冷却。"""
@@ -6721,6 +7165,9 @@ class DesktopPet(QLabel):
 
     def user_requested_speech(self):
         """右键主动让果子说句话，也算一次亲近互动。"""
+
+        if self.state == "angry":
+            return
 
         self.record_close_interaction()
         self.say_random_message(
@@ -6853,6 +7300,53 @@ class DesktopPet(QLabel):
             and self.update_status_widget.isVisible()
         ):
             self.position_update_status()
+
+        if (
+            hasattr(self, "pet_status_widget")
+            and self.pet_status_widget.isVisible()
+        ):
+            self.position_pet_status_widget()
+
+    def position_pet_status_widget(self):
+        """把状态面板放在果子旁边并限制在当前屏幕内。"""
+
+        screen = QApplication.screenAt(
+            self.frameGeometry().center()
+        )
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+
+        area = screen.availableGeometry()
+        widget = self.pet_status_widget
+        gap = 10
+
+        right_x = self.x() + self.width() + gap
+        left_x = self.x() - widget.width() - gap
+
+        if right_x + widget.width() <= area.right() + 1:
+            x = right_x
+        elif left_x >= area.left():
+            x = left_x
+        else:
+            x = max(
+                area.left(),
+                min(
+                    self.x(),
+                    area.right() - widget.width() + 1,
+                ),
+            )
+
+        y = self.y() + (self.height() - widget.height()) // 2
+        y = max(
+            area.top(),
+            min(
+                y,
+                area.bottom() - widget.height() + 1,
+            ),
+        )
+        widget.move(x, y)
 
     def position_update_status(self):
         """把更新状态图标放在果子侧边，避开对话气泡。"""
@@ -7066,7 +7560,7 @@ class DesktopPet(QLabel):
     def auto_speak(self):
         if (
             self.isVisible()
-            and self.state != "sleeping"
+            and self.state in ("normal", "walking")
             and not self.speech_bubble.isVisible()
         ):
             self.say_random_message()
@@ -7151,6 +7645,9 @@ class DesktopPet(QLabel):
 
     def handle_single_click(self):
         """执行普通戳击或当前轮次的三连戳特殊反应。"""
+
+        if self.state == "angry":
+            return
 
         if self.try_recent_grudge_reaction():
             return
@@ -7351,6 +7848,9 @@ class DesktopPet(QLabel):
     def play_trigger_action(self, trigger_name):
         """按概率、权重和冷却播放事件动作。"""
 
+        if self.state == "angry":
+            return False
+
         # 在线更新期间不允许随机动作插进来。
         # 启动时“耶嘿！”来自随机的“开心摇摆”，
         # 之前它可能刚好在自动检查更新过程中触发。
@@ -7455,6 +7955,16 @@ class DesktopPet(QLabel):
 
         self.mouse_idle_attempted = True
 
+        # 刚被连续戳过时，果子会暂时更不想主动靠近鼠标。
+        if (
+            self.recent_state_active("grudge")
+            and random.random() < 0.75
+        ):
+            debug_log(
+                "mouse idle peek suppressed by recent grudge"
+            )
+            return
+
         played = self.play_trigger_action(
             "mouse_idle"
         )
@@ -7528,6 +8038,10 @@ class DesktopPet(QLabel):
             )
             and not self.is_dragging
         ):
+            if self.play_recent_preferred_random_action():
+                self.random_action_has_played = True
+                return
+
             if self.play_midday_sleepy_action():
                 self.random_action_has_played = True
                 return
@@ -8128,8 +8642,9 @@ class DesktopPet(QLabel):
         """暂停会干扰线上动作的其他行为。"""
 
         self.stroke_post_timer.stop()
+        self.stroke_nuzzle_timer.stop()
 
-        if self.state == "stroke_post":
+        if self.state in ("stroke_post", "stroke_nuzzle"):
             self.stroke_post_sequence = []
             self.stroke_post_index = 0
             self.state = "normal"
@@ -8150,6 +8665,9 @@ class DesktopPet(QLabel):
         if self.state == "sleeping":
             self.sleep_duration_timer.stop()
             self.sleep_animation_timer.stop()
+            self.sleep_special_timer.stop()
+            self.sleep_event_timer.stop()
+            self.sleep_dream_timer.stop()
             self.sleep_zzz.stop_animation()
 
     def play_custom_action(
@@ -8166,6 +8684,9 @@ class DesktopPet(QLabel):
         )
 
         if not isinstance(action, dict):
+            return
+
+        if self.state == "angry":
             return
 
         steps = action.get("steps", [])
@@ -9155,6 +9676,7 @@ class DesktopPet(QLabel):
         ]
 
         actions_menu = menu.addMenu("线上动作")
+        actions_menu.setEnabled(self.state != "angry")
 
         if not manual_actions:
             empty_action = QAction(
@@ -9163,7 +9685,7 @@ class DesktopPet(QLabel):
             )
             empty_action.setEnabled(False)
             actions_menu.addAction(empty_action)
-            return
+            return actions_menu
 
         for action_data in manual_actions:
             action_item = QAction(
@@ -9175,6 +9697,8 @@ class DesktopPet(QLabel):
                 self.play_custom_action(data)
             )
             actions_menu.addAction(action_item)
+
+        return actions_menu
 
     def refresh_tray_actions_menu(self):
         if not hasattr(self, "tray_actions_menu"):
@@ -9544,11 +10068,17 @@ class DesktopPet(QLabel):
             walk_speed * RUN_SPEED_MULTIPLIER,
         )
 
-    def run_to_screen_point(self, point):
-        """让果子快速跑到双击位置附近。"""
+    def run_to_screen_point(
+        self,
+        point,
+        arrival_callback=None,
+    ):
+        """让果子快速跑到指定位置附近，可在到达后继续动作。"""
 
-        if not self.isVisible():
+        if not self.isVisible() or self.state == "angry":
             return
+
+        self.summon_arrival_callback = arrival_callback
 
         self.single_click_timer.stop()
         self.cancel_release_bounce()
@@ -9585,7 +10115,7 @@ class DesktopPet(QLabel):
         if distance < 8:
             self.state = "normal"
             self.setPixmap(self.normal)
-            self.resume_normal_schedules()
+            self.finish_summon_arrival()
             return
 
         speed = self.run_step_speed()
@@ -9611,6 +10141,61 @@ class DesktopPet(QLabel):
         self.show_current_walk_frame()
         self.walk_move_timer.start()
         self.walk_animation_timer.start()
+
+    def finish_summon_arrival(self):
+        callback = self.summon_arrival_callback
+        self.summon_arrival_callback = None
+
+        if callback is not None:
+            try:
+                callback()
+            except (RuntimeError, TypeError):
+                self.resume_normal_schedules()
+        else:
+            self.resume_normal_schedules()
+
+    def action_by_name(self, name):
+        for action in self.actions:
+            if action.get("name") == name:
+                return action
+        return None
+
+    def find_guozi(self):
+        """右键“果子在哪？”：跑到当前鼠标附近。"""
+
+        if self.state == "angry":
+            return
+        self.run_to_screen_point(
+            QPoint(QCursor.pos()),
+            arrival_callback=self.finish_find_guozi,
+        )
+
+    def finish_find_guozi(self):
+        """找到鼠标后开心摇摆，同时只说指定台词。"""
+
+        action = self.action_by_name("开心摇摆")
+        if action is not None:
+            stripped_steps = [
+                dict(step)
+                for step in action.get("steps", [])
+                if isinstance(step, dict)
+                and step.get("type") != "say"
+            ]
+            if stripped_steps:
+                self.play_custom_action(
+                    {
+                        "name": "找到果子-开心摇摆",
+                        "steps": stripped_steps,
+                    },
+                    trigger_name="find_guozi",
+                )
+                self.say("我在这里哟")
+                return
+
+        self.state = "happy"
+        self.setPixmap(self.happy)
+        self.say("我在这里哟")
+        self.happy_timer.start(1800)
 
     def resume_normal_schedules(self):
         """恢复普通眨眼、说话、散步和睡觉安排。"""
@@ -10259,8 +10844,11 @@ class DesktopPet(QLabel):
                 self.walk_target_y,
             )
             self.summon_run_active = False
-            self.stop_walking()
-            self.resume_normal_schedules()
+            self.stop_walk_timers()
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.save_position()
+            self.finish_summon_arrival()
             return
 
         self.walk_float_x += self.walk_velocity_x
@@ -10568,6 +11156,185 @@ class DesktopPet(QLabel):
         ):
             self.finish_edge_crawl()
 
+    def start_side_peek(self, side, force=False):
+        """从左右屏幕边探头：1→2→3，停一下，再 3→2→1。"""
+
+        frames = self.edge_peek_frames.get(side)
+        if not frames or self.state == "angry":
+            return False
+        if not force and random.random() >= EDGE_PEEK_CHANCE:
+            return False
+
+        area = self.current_action_screen_area()
+        if area is None:
+            return False
+
+        self.stop_walk_timers()
+        self.state = "edge_special"
+        self.edge_special_kind = "peek"
+        self.edge_special_side = side
+        self.edge_special_sequence = [
+            (frames[0], EDGE_PEEK_FRAME_MS),
+            (frames[1], EDGE_PEEK_FRAME_MS),
+            (frames[2], EDGE_PEEK_HOLD_MS),
+            (frames[2], EDGE_PEEK_FRAME_MS),
+            (frames[1], EDGE_PEEK_FRAME_MS),
+            (frames[0], EDGE_PEEK_FRAME_MS),
+        ]
+        self.edge_special_index = 0
+
+        x = (
+            area.left()
+            if side == -1
+            else area.right() - self.width() + 1
+        )
+        y = max(
+            area.top(),
+            min(
+                self.y(),
+                area.bottom() - self.height() + 1,
+            ),
+        )
+        self.move(x, y)
+        frame, duration = self.edge_special_sequence[0]
+        self.setPixmap(frame)
+        self.edge_special_timer.start(duration)
+        debug_log(
+            f"edge peek start side={side} force={force}"
+        )
+        return True
+
+    def start_bottom_flat(self, force=False):
+        """趴在屏幕底部：flat1 1秒 / flat2 0.25秒，至少三轮。"""
+
+        if not self.flat_frames_ready or self.state == "angry":
+            return False
+        if not force and random.random() >= BOTTOM_FLAT_CHANCE:
+            return False
+
+        area = self.current_action_screen_area()
+        if area is None:
+            return False
+
+        self.stop_walk_timers()
+        self.state = "edge_special"
+        self.edge_special_kind = "flat"
+        self.edge_special_side = 0
+        loops = random.randint(3, 5)
+        self.edge_special_sequence = []
+        for _ in range(loops):
+            self.edge_special_sequence.append(
+                (self.flat_frames[0], 1000)
+            )
+            self.edge_special_sequence.append(
+                (self.flat_frames[1], 250)
+            )
+        self.edge_special_index = 0
+
+        x = max(
+            area.left(),
+            min(
+                self.x(),
+                area.right() - self.width() + 1,
+            ),
+        )
+        y = area.bottom() - self.height() + 1
+        self.move(x, y)
+        frame, duration = self.edge_special_sequence[0]
+        self.setPixmap(frame)
+        self.edge_special_timer.start(duration)
+        debug_log(
+            f"bottom flat start loops={loops} force={force}"
+        )
+        return True
+
+    def advance_edge_special(self):
+        if self.state != "edge_special":
+            self.edge_special_timer.stop()
+            return
+
+        self.edge_special_index += 1
+        if self.edge_special_index >= len(
+            self.edge_special_sequence
+        ):
+            kind = self.edge_special_kind
+            side = self.edge_special_side
+            self.edge_special_sequence = []
+            self.edge_special_index = 0
+            self.edge_special_kind = None
+            self.edge_special_side = 0
+
+            if kind == "peek":
+                self.resume_walk_from_side_peek(side)
+            else:
+                self.state = "normal"
+                self.setPixmap(self.normal)
+                self.save_position()
+                self.resume_normal_schedules()
+            return
+
+        frame, duration = self.edge_special_sequence[
+            self.edge_special_index
+        ]
+        self.setPixmap(frame)
+        self.edge_special_timer.start(duration)
+
+    def resume_walk_from_side_peek(self, side):
+        """探完头以后从边缘重新走回屏幕。"""
+
+        self.state = "normal"
+        self.setPixmap(self.normal)
+        self.save_position()
+
+        if self.walking_paused:
+            self.resume_normal_schedules()
+            return
+
+        area = self.current_action_screen_area()
+        if area is None:
+            self.resume_normal_schedules()
+            return
+
+        inward = 1 if side == -1 else -1
+        speed = max(
+            1.5,
+            float(self.settings["walk_speed"]),
+        )
+        available = (
+            area.right() - self.width() + 1 - self.x()
+            if inward == 1
+            else self.x() - area.left()
+        )
+        distance = min(
+            max(0, available),
+            random.randint(120, 240),
+        )
+        if distance <= 0:
+            self.resume_normal_schedules()
+            return
+
+        self.state = "walking"
+        self.walk_direction = inward
+        self.walk_float_x = float(self.x())
+        self.walk_float_y = float(self.y())
+        self.walk_target_x = round(
+            self.x() + inward * distance
+        )
+        self.walk_target_y = self.y()
+        self.walk_velocity_x = float(speed * inward)
+        self.walk_velocity_y = 0.0
+        self.walk_steps_left = max(
+            1,
+            math.ceil(distance / speed),
+        )
+        self.walk_frame_index = 0
+        self.walk_animation_timer.setInterval(
+            WALK_FRAME_INTERVAL_MS
+        )
+        self.show_current_walk_frame()
+        self.walk_move_timer.start()
+        self.walk_animation_timer.start()
+
     def update_horizontal_walking(self):
         """更新横向散步位置。"""
 
@@ -10585,14 +11352,17 @@ class DesktopPet(QLabel):
         if safe_x != new_x:
             self.move(safe_x, safe_y)
 
-            if self.play_trigger_action("edge"):
-                return
-
             wall_side = (
                 -1
                 if self.walk_direction == -1
                 else 1
             )
+
+            if self.start_side_peek(wall_side):
+                return
+
+            if self.play_trigger_action("edge"):
+                return
 
             if self.start_edge_crawl(
                 wall_side
@@ -10724,6 +11494,23 @@ class DesktopPet(QLabel):
         ):
             self.move(safe_x, safe_y)
 
+            if (
+                safe_y != new_y
+                and new_y > safe_y
+                and self.start_bottom_flat()
+            ):
+                return
+
+            if safe_x != new_x:
+                side = (
+                    -1
+                    if new_x < safe_x
+                    else 1
+                )
+
+                if self.start_side_peek(side):
+                    return
+
             if self.play_trigger_action("edge"):
                 return
 
@@ -10736,6 +11523,9 @@ class DesktopPet(QLabel):
 
                 self.full_screen_walk_to_edge = False
                 self.full_screen_edge_side = 0
+
+                if self.start_side_peek(side):
+                    return
 
                 if self.start_edge_crawl(
                     side
@@ -10815,6 +11605,9 @@ class DesktopPet(QLabel):
             self.schedule_walk()
 
     def toggle_walking(self):
+        if self.state == "angry":
+            return
+
         if self.walking_paused:
             self.walking_paused = False
 
@@ -10941,6 +11734,7 @@ class DesktopPet(QLabel):
 
         self.stroke_comfy_timer.stop()
         self.stroke_post_timer.stop()
+        self.stroke_nuzzle_timer.stop()
         self.stroke_post_sequence = []
         self.stroke_post_index = 0
 
@@ -11069,14 +11863,78 @@ class DesktopPet(QLabel):
             self.stroke_post_timer.stop()
             self.stroke_post_sequence = []
             self.stroke_post_index = 0
-            self.state = "normal"
-            self.setPixmap(self.normal)
-            self.resume_after_stroking()
+            self.start_stroke_nuzzle()
             return
 
         frame, duration = self.stroke_post_sequence[self.stroke_post_index]
         self.setPixmap(frame)
         self.stroke_post_timer.start(int(duration))
+
+    def start_stroke_nuzzle(self):
+        """讨摸动画后主动蹭两下手，并向鼠标轻轻靠近。"""
+
+        if not self.getclose_frames_ready:
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.resume_after_stroking()
+            return
+
+        self.state = "stroke_nuzzle"
+        self.stroke_nuzzle_index = 0
+        self.stroke_nuzzle_frames_left = (
+            len(self.getclose_frames)
+            * POST_STROKE_NUZZLE_LOOPS
+        )
+        self.setPixmap(self.getclose_frames[0])
+        self.stroke_nuzzle_index = 1
+        self.stroke_nuzzle_frames_left -= 1
+        self.stroke_nuzzle_timer.start()
+        debug_log("stroke nuzzle start")
+
+    def nudge_toward_cursor(self):
+        cursor = QPoint(QCursor.pos())
+        center = self.frameGeometry().center()
+        dx = cursor.x() - center.x()
+        dy = cursor.y() - center.y()
+        distance = math.hypot(dx, dy)
+
+        # 只做很轻的靠近。鼠标已经跑很远时不追过去。
+        if distance < 4 or distance > 420:
+            return
+
+        step = min(
+            POST_STROKE_NUZZLE_STEP_PX,
+            distance,
+        )
+        target_x = self.x() + dx / distance * step
+        target_y = self.y() + dy / distance * step
+        self.move_to_safe_position(
+            round(target_x),
+            round(target_y),
+        )
+
+    def advance_stroke_nuzzle(self):
+        if self.state != "stroke_nuzzle":
+            self.stroke_nuzzle_timer.stop()
+            return
+
+        self.nudge_toward_cursor()
+
+        if self.stroke_nuzzle_frames_left <= 0:
+            self.stroke_nuzzle_timer.stop()
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.save_position()
+            self.resume_after_stroking()
+            return
+
+        frame = self.getclose_frames[
+            self.stroke_nuzzle_index
+            % len(self.getclose_frames)
+        ]
+        self.setPixmap(frame)
+        self.stroke_nuzzle_index += 1
+        self.stroke_nuzzle_frames_left -= 1
 
     def resume_after_stroking(self):
         """抚摸/讨摸动画结束后恢复自动行为。"""
@@ -11431,7 +12289,7 @@ class DesktopPet(QLabel):
         self.sleep_wait_timer.stop()
 
         if (
-            self.state == "sleeping"
+            self.state in ("sleeping", "angry")
             or not self.isVisible()
         ):
             return
@@ -11490,7 +12348,7 @@ class DesktopPet(QLabel):
         )
 
     def start_sleeping(self):
-        if self.state == "sleeping":
+        if self.state == "sleeping" or self.state == "angry":
             return
 
         # 每次真正进入睡眠，都把整套戳击轮次清零。
@@ -11514,6 +12372,13 @@ class DesktopPet(QLabel):
             )
 
         self.state = "sleeping"
+        self.sleep_pose = "normal"
+        self.sleep_special_kind = None
+        self.sleep_special_sequence = []
+        self.sleep_special_index = 0
+        self.sleep_special_timer.stop()
+        self.sleep_event_timer.stop()
+        self.sleep_dream_timer.stop()
         self.sleep_frame_index = 0
         self.setPixmap(
             self.sleep_frames[
@@ -11526,11 +12391,155 @@ class DesktopPet(QLabel):
         self.sleep_zzz.start_animation()
         self.keep_all_windows_on_top()
         self.schedule_auto_wake()
+        self.schedule_sleep_random_event()
+        self.schedule_sleep_dream()
 
         self.update_menu_text()
 
+    def schedule_sleep_random_event(self):
+        self.sleep_event_timer.stop()
+        if self.state != "sleeping":
+            return
+        self.sleep_event_timer.start(
+            random.randint(
+                SLEEP_EVENT_WAIT_MIN_MS,
+                SLEEP_EVENT_WAIT_MAX_MS,
+            )
+        )
+
+    def schedule_sleep_dream(self):
+        self.sleep_dream_timer.stop()
+        if self.state != "sleeping":
+            return
+        self.sleep_dream_timer.start(
+            random.randint(
+                SLEEP_DREAM_WAIT_MIN_MS,
+                SLEEP_DREAM_WAIT_MAX_MS,
+            )
+        )
+
+    def try_sleep_dream_talk(self):
+        if self.state != "sleeping":
+            return
+
+        # 偶尔说一句梦话；只显示气泡，不调用说话音效。
+        if random.random() < 0.55:
+            self.say(
+                random.choice(SLEEP_DREAM_LINES)
+            )
+        self.schedule_sleep_dream()
+
+    def try_sleep_random_event(self):
+        if self.state != "sleeping":
+            return
+        if self.is_dragging or self.sleep_special_sequence:
+            self.schedule_sleep_random_event()
+            return
+
+        if (
+            self.sleep_pose == "normal"
+            and self.sleep_flip_frames_ready
+            and random.random() < 0.48
+        ):
+            self.start_sleep_flip_event()
+            return
+
+        if (
+            self.sleep_pose == "flipped"
+            and self.sleep_ear_frames_ready
+            and random.random() < 0.58
+        ):
+            self.start_sleep_ear_event()
+            return
+
+        self.schedule_sleep_random_event()
+
+    def start_sleep_flip_event(self):
+        if (
+            self.state != "sleeping"
+            or not self.sleep_flip_frames_ready
+        ):
+            return False
+
+        self.sleep_animation_timer.stop()
+        self.sleep_special_kind = "flip"
+        self.sleep_special_sequence = [
+            (self.sleep_flip_frames[0], SLEEP_FLIP_FRAME_MS),
+            (self.sleep_flip_frames[1], SLEEP_FLIP_FRAME_MS),
+            (self.sleep_flip_frames[2], SLEEP_FLIP_FRAME_MS),
+        ]
+        self.sleep_special_index = 0
+        frame, duration = self.sleep_special_sequence[0]
+        self.setPixmap(frame)
+        self.sleep_special_timer.start(duration)
+        return True
+
+    def start_sleep_ear_event(self):
+        if (
+            self.state != "sleeping"
+            or not self.sleep_ear_frames_ready
+            or self.sleep_flipped_base_frame is None
+        ):
+            return False
+
+        self.sleep_animation_timer.stop()
+        self.sleep_pose = "flipped"
+        self.sleep_special_kind = "ear"
+        self.sleep_special_sequence = [
+            (frame, SLEEP_EAR_FRAME_MS)
+            for frame in self.sleep_ear_frames
+        ]
+        self.sleep_special_index = 0
+        frame, duration = self.sleep_special_sequence[0]
+        self.setPixmap(frame)
+        self.sleep_special_timer.start(duration)
+        return True
+
+    def advance_sleep_special(self):
+        if self.state != "sleeping":
+            self.sleep_special_timer.stop()
+            return
+
+        self.sleep_special_index += 1
+        if self.sleep_special_index >= len(
+            self.sleep_special_sequence
+        ):
+            finished_kind = self.sleep_special_kind
+            self.sleep_special_sequence = []
+            self.sleep_special_index = 0
+            self.sleep_special_kind = None
+
+            if finished_kind == "flip":
+                self.sleep_pose = "flipped"
+                self.setPixmap(
+                    self.sleep_flipped_base_frame
+                )
+            elif self.sleep_pose == "flipped":
+                self.setPixmap(
+                    self.sleep_flipped_base_frame
+                )
+            else:
+                self.sleep_frame_index = 0
+                self.setPixmap(
+                    self.sleep_frames[0]
+                )
+                self.sleep_animation_timer.start()
+
+            self.schedule_sleep_random_event()
+            return
+
+        frame, duration = self.sleep_special_sequence[
+            self.sleep_special_index
+        ]
+        self.setPixmap(frame)
+        self.sleep_special_timer.start(duration)
+
     def update_sleep_frame(self):
         if self.state != "sleeping":
+            self.sleep_animation_timer.stop()
+            return
+
+        if self.sleep_pose != "normal" or self.sleep_special_sequence:
             self.sleep_animation_timer.stop()
             return
 
@@ -11554,6 +12563,13 @@ class DesktopPet(QLabel):
 
         self.sleep_duration_timer.stop()
         self.sleep_animation_timer.stop()
+        self.sleep_special_timer.stop()
+        self.sleep_event_timer.stop()
+        self.sleep_dream_timer.stop()
+        self.sleep_special_sequence = []
+        self.sleep_special_index = 0
+        self.sleep_special_kind = None
+        self.sleep_pose = "normal"
         self.sleep_zzz.stop_animation()
 
         self.state = "normal"
@@ -11614,6 +12630,9 @@ class DesktopPet(QLabel):
         self.update_menu_text()
 
     def toggle_sleep(self):
+        if self.state == "angry":
+            return
+
         if self.state == "sleeping":
             self.wake_up(
                 human=True
@@ -12663,6 +13682,10 @@ class DesktopPet(QLabel):
                 if self.ignore_next_left_release:
                     self.ignore_next_left_release = False
 
+                elif self.state == "angry":
+                    # 生气期间点击不触发任何互动；拖动已经在上方单独处理。
+                    pass
+
                 elif self.state == "sleeping":
                     # 睡着时这一整个点击只负责叫醒。
                     self.click_woke_from_sleep = True
@@ -12704,7 +13727,8 @@ class DesktopPet(QLabel):
             # 果子本体双击没有专属动作。
             # wake / poke 锁只影响“戳”，不影响真正拖动。
             if (
-                self.wake_input_locked
+                self.state == "angry"
+                or self.wake_input_locked
                 or self.poke_input_locked
             ):
                 self.single_click_timer.stop()
@@ -12716,6 +13740,147 @@ class DesktopPet(QLabel):
             self.ignore_next_left_release = False
             event.accept()
 
+
+    # ---------- 开发者 / 测试 ----------
+
+    def developer_mode_enabled(self):
+        return DEVELOPER_MARKER_FILE.exists()
+
+    def prepare_developer_test(self):
+        if self.state == "angry":
+            self.finish_angry_state(force=True)
+        if self.state == "sleeping":
+            self.sleep_duration_timer.stop()
+            self.sleep_animation_timer.stop()
+            self.sleep_special_timer.stop()
+            self.sleep_event_timer.stop()
+            self.sleep_dream_timer.stop()
+            self.sleep_zzz.stop_animation()
+            self.state = "normal"
+            self.sleep_pose = "normal"
+            self.setPixmap(self.normal)
+        if self.state == "custom_action":
+            self.stop_custom_action(resume=False)
+        self.edge_special_timer.stop()
+        if self.state == "edge_special":
+            self.state = "normal"
+            self.setPixmap(self.normal)
+
+    def developer_play_action_by_name(self, name):
+        self.prepare_developer_test()
+        action = self.action_by_name(name)
+        if action is not None:
+            self.play_custom_action(
+                action,
+                trigger_name="developer",
+            )
+            return True
+        self.say(f"没有找到动作：{name}")
+        return False
+
+    def developer_play_first_trigger(self, trigger_name):
+        self.prepare_developer_test()
+        actions = self.get_actions_for_trigger(trigger_name)
+        if actions:
+            self.play_custom_action(
+                actions[0],
+                trigger_name="developer",
+            )
+            return True
+        self.say(f"没有找到测试动作：{trigger_name}")
+        return False
+
+    def developer_test_hunger(self):
+        self.prepare_developer_test()
+        if not self.start_zero_hunger_animation():
+            self.say("饥饿动画资源还没有准备好。")
+
+    def developer_test_too_full(self):
+        self.prepare_developer_test()
+        steps = []
+        if self.too_full_lines:
+            steps.append(
+                {
+                    "type": "say",
+                    "texts": list(self.too_full_lines),
+                }
+            )
+        if self.too_full_frames:
+            steps.append(
+                {
+                    "type": "frames",
+                    "frames": list(self.too_full_frames),
+                    "frame_interval": int(
+                        self.too_full_frame_interval
+                    ),
+                    "loops": int(self.too_full_loops),
+                    "playback": "loop",
+                }
+            )
+        if steps:
+            self.play_custom_action(
+                {
+                    "name": "测试-吃太饱",
+                    "steps": steps,
+                },
+                trigger_name="developer",
+            )
+        else:
+            self.say("吃太饱动画资源还没有准备好。")
+
+    def developer_test_comfy_post(self):
+        self.prepare_developer_test()
+        self.start_stroke_post_sequence()
+
+    def developer_ensure_sleeping(self):
+        self.prepare_developer_test()
+        self.start_sleeping()
+        self.sleep_duration_timer.stop()
+
+    def developer_test_sleep_flip(self):
+        self.developer_ensure_sleeping()
+        self.start_sleep_flip_event()
+
+    def developer_test_sleep_ear(self):
+        self.developer_ensure_sleeping()
+        if self.sleep_flipped_base_frame is None:
+            self.say("翻身图片还没有准备好。")
+            return
+        self.sleep_animation_timer.stop()
+        self.sleep_pose = "flipped"
+        self.setPixmap(self.sleep_flipped_base_frame)
+        self.start_sleep_ear_event()
+
+    def add_developer_test_menu(self, menu):
+        if not self.developer_mode_enabled():
+            return None
+
+        test_menu = menu.addMenu("测试")
+
+        items = [
+            ("打哈欠", lambda: self.developer_play_action_by_name("打哈欠")),
+            ("打盹", lambda: self.developer_play_action_by_name("打盹")),
+            ("饥饿动画", self.developer_test_hunger),
+            ("吃太饱", self.developer_test_too_full),
+            ("comfy抚摸后续", self.developer_test_comfy_post),
+            ("记仇 / soangry", lambda: self.enter_angry_state(ANGRY_DURATION_SECONDS)),
+            ("解除记仇", lambda: self.finish_angry_state(force=True)),
+            ("偷看鼠标", lambda: self.developer_play_first_trigger("mouse_idle")),
+            ("睡觉翻身", self.developer_test_sleep_flip),
+            ("睡觉动耳朵", self.developer_test_sleep_ear),
+            ("趴屏幕底部", lambda: (self.prepare_developer_test(), self.start_bottom_flat(force=True))),
+            ("左边探头", lambda: (self.prepare_developer_test(), self.start_side_peek(-1, force=True))),
+            ("右边探头", lambda: (self.prepare_developer_test(), self.start_side_peek(1, force=True))),
+        ]
+
+        for label, callback in items:
+            action = QAction(label, test_menu)
+            action.triggered.connect(
+                lambda checked=False, fn=callback: fn()
+            )
+            test_menu.addAction(action)
+
+        return test_menu
 
     # ---------- 右键菜单 ----------
 
@@ -12792,6 +13957,22 @@ class DesktopPet(QLabel):
             self.user_requested_speech
         )
 
+        status_action = QAction(
+            "状态",
+            self,
+        )
+        status_action.triggered.connect(
+            self.show_pet_status
+        )
+
+        find_action = QAction(
+            "果子在哪？",
+            self,
+        )
+        find_action.triggered.connect(
+            self.find_guozi
+        )
+
         mute_action = QAction(
             "静音果子",
             self,
@@ -12860,13 +14041,23 @@ class DesktopPet(QLabel):
             self.quit_pet
         )
 
+        angry_locked = self.state == "angry"
+        walk_action.setEnabled(not angry_locked)
+        movement_menu.setEnabled(not angry_locked)
+        sleep_action.setEnabled(not angry_locked)
+        speak_action.setEnabled(not angry_locked)
+        find_action.setEnabled(not angry_locked)
+
         menu.addAction(walk_action)
         menu.addMenu(movement_menu)
         menu.addAction(sleep_action)
         menu.addAction(speak_action)
+        menu.addAction(status_action)
+        menu.addAction(find_action)
         menu.addAction(mute_action)
         self.add_foods_to_menu(menu)
         self.add_actions_to_menu(menu)
+        self.add_developer_test_menu(menu)
         menu.addSeparator()
         menu.addAction(reload_action)
         menu.addAction(online_update_action)
@@ -12889,12 +14080,20 @@ class DesktopPet(QLabel):
 
         self.stroke_comfy_timer.stop()
         self.stroke_post_timer.stop()
+        self.stroke_nuzzle_timer.stop()
+        self.angry_animation_timer.stop()
+        self.angry_end_timer.stop()
+        self.edge_special_timer.stop()
+        self.sleep_special_timer.stop()
+        self.sleep_event_timer.stop()
+        self.sleep_dream_timer.stop()
 
         self.save_position()
         self.save_pet_state()
         self.fullness_decay_timer.stop()
         self.hunger_timer.stop()
         self.speech_bubble.hide()
+        self.pet_status_widget.hide()
         self.update_status_hide_timer.stop()
         self.update_status_widget.animation_timer.stop()
         self.update_status_widget.hide()
@@ -12927,6 +14126,14 @@ class DesktopPet(QLabel):
         self.fullness_decay_timer.stop()
         self.hunger_timer.stop()
         self.speech_bubble.hide()
+        self.pet_status_widget.hide()
+        self.stroke_nuzzle_timer.stop()
+        self.angry_animation_timer.stop()
+        self.angry_end_timer.stop()
+        self.edge_special_timer.stop()
+        self.sleep_special_timer.stop()
+        self.sleep_event_timer.stop()
+        self.sleep_dream_timer.stop()
         self.drag_animation_timer.stop()
         self.bounce_timer.stop()
         self.custom_action_timer.stop()
