@@ -1,5 +1,5 @@
 {
-  "version": 36,
+  "version": 37,
   "actions": [
     {
       "name": "开心摇摆",
@@ -297,11 +297,12 @@
     {
       "name": "跑来偷看你在干嘛",
       "triggers": [
-        "random"
+        "manual",
+        "mouse_idle"
       ],
       "weight": 1,
-      "chance": 100,
-      "cooldown": 90,
+      "chance": 55,
+      "cooldown": 120,
       "steps": [
         {
           "type": "move_near_mouse",

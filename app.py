@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 65
+APP_BUILD_VERSION = 66
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -250,6 +250,10 @@ DEFAULT_SETTINGS = {
     "sleep_duration_min": 30,
     "sleep_duration_max": 90,
     "sleep_frame_interval": 900,
+
+    # 鼠标静止多久后，才有机会触发“跑来偷看”。
+    # 用户可以直接在 settings.json 里添加/修改这个数字。
+    "peek_idle_seconds": 60,
 }
 
 DEFAULT_MESSAGES = [
@@ -789,6 +793,9 @@ class DesktopPet(QLabel):
         # ---------- 喂食系统 ----------
         self.foods = []
         self.too_full_lines = []
+        self.too_full_frames = []
+        self.too_full_frame_interval = 320
+        self.too_full_loops = 4
         self.hungry_lines_30 = []
         self.hungry_lines_10 = []
         self.hungry_lines_0 = []
@@ -831,6 +838,14 @@ class DesktopPet(QLabel):
         self.startup_greeting_pending = False
         self.startup_action_pending = False
         self.action_last_triggered = {}
+
+        # 鼠标长时间静止时，果子偶尔会跑过去偷看。
+        # 每一段“静止期”最多尝试一次；鼠标一动就重新计时。
+        self.mouse_idle_last_position = QPoint(
+            QCursor.pos()
+        )
+        self.mouse_idle_since = time.monotonic()
+        self.mouse_idle_attempted = False
 
         # 连戳循环：
         # 第 1 组三下 -> “你怎么还戳呀”
@@ -1053,6 +1068,13 @@ class DesktopPet(QLabel):
             self.try_random_action
         )
 
+        self.mouse_idle_timer = QTimer(self)
+        self.mouse_idle_timer.setInterval(500)
+        self.mouse_idle_timer.timeout.connect(
+            self.check_mouse_idle_peek
+        )
+        self.mouse_idle_timer.start()
+
         # ---------- 在线更新应用 ----------
 
         self.pending_update_timer = QTimer(self)
@@ -1267,6 +1289,19 @@ class DesktopPet(QLabel):
         settings["sleep_frame_interval"] = max(
             100,
             int(settings["sleep_frame_interval"]),
+        )
+
+        settings["peek_idle_seconds"] = max(
+            10,
+            min(
+                int(
+                    settings.get(
+                        "peek_idle_seconds",
+                        60,
+                    )
+                ),
+                3600,
+            ),
         )
 
         if (
@@ -1940,6 +1975,7 @@ class DesktopPet(QLabel):
                         "wake",
                         "edge",
                         "startup",
+                        "mouse_idle",
                     }
 
                     raw_triggers = raw_action.get(
@@ -2220,6 +2256,66 @@ class DesktopPet(QLabel):
                 "至少需要一句吃太饱台词。"
             )
 
+        raw_too_full_frames = data.get(
+            "too_full_frames",
+            [],
+        )
+
+        if not isinstance(
+            raw_too_full_frames,
+            list,
+        ):
+            raise ValueError(
+                "too_full_frames 必须是列表。"
+            )
+
+        too_full_frames = []
+
+        for filename in raw_too_full_frames[:12]:
+            safe_name = self.sanitize_action_filename(
+                filename
+            )
+
+            if safe_name is None:
+                raise ValueError(
+                    "吃太饱动画图片文件名不安全。"
+                )
+
+            too_full_frames.append(safe_name)
+
+        try:
+            too_full_frame_interval = int(
+                data.get(
+                    "too_full_frame_interval",
+                    320,
+                )
+            )
+        except (TypeError, ValueError):
+            too_full_frame_interval = 320
+
+        too_full_frame_interval = max(
+            100,
+            min(
+                too_full_frame_interval,
+                3000,
+            ),
+        )
+
+        try:
+            too_full_loops = int(
+                data.get(
+                    "too_full_loops",
+                    4,
+                )
+            )
+        except (TypeError, ValueError):
+            too_full_loops = 4
+
+        too_full_loops = max(
+            1,
+            min(too_full_loops, 20),
+        )
+
         raw_foods = data.get("foods", [])
 
         if not isinstance(raw_foods, list):
@@ -2455,6 +2551,11 @@ class DesktopPet(QLabel):
                 fullness_decay_seconds
             ),
             "too_full_lines": too_full_lines,
+            "too_full_frames": too_full_frames,
+            "too_full_frame_interval": (
+                too_full_frame_interval
+            ),
+            "too_full_loops": too_full_loops,
             "hungry_lines_30": hungry_lines_30,
             "hungry_lines_10": hungry_lines_10,
             "hungry_lines_0": hungry_lines_0,
@@ -2467,6 +2568,9 @@ class DesktopPet(QLabel):
         if not FOODS_FILE.exists():
             self.foods = []
             self.too_full_lines = []
+            self.too_full_frames = []
+            self.too_full_frame_interval = 320
+            self.too_full_loops = 4
             self.hungry_lines_30 = []
             self.hungry_lines_10 = []
             self.hungry_lines_0 = []
@@ -2489,6 +2593,9 @@ class DesktopPet(QLabel):
             )
             self.foods = []
             self.too_full_lines = []
+            self.too_full_frames = []
+            self.too_full_frame_interval = 320
+            self.too_full_loops = 4
             self.hungry_lines_30 = []
             self.hungry_lines_10 = []
             self.hungry_lines_0 = []
@@ -2497,6 +2604,17 @@ class DesktopPet(QLabel):
         self.foods = config["foods"]
         self.too_full_lines = (
             config["too_full_lines"]
+        )
+        self.too_full_frames = list(
+            config["too_full_frames"]
+        )
+        self.too_full_frame_interval = int(
+            config[
+                "too_full_frame_interval"
+            ]
+        )
+        self.too_full_loops = int(
+            config["too_full_loops"]
         )
         self.hungry_lines_30 = (
             config["hungry_lines_30"]
@@ -2949,12 +3067,62 @@ class DesktopPet(QLabel):
             self.fullness
             >= self.too_full_threshold
         ):
-            if self.too_full_lines:
+            frames_ready = (
+                self.too_full_frames
+                and all(
+                    self.action_image_path(
+                        filename
+                    ).exists()
+                    for filename
+                    in self.too_full_frames
+                )
+            )
+
+            if frames_ready:
+                steps = []
+
+                if self.too_full_lines:
+                    steps.append(
+                        {
+                            "type": "say",
+                            "texts": list(
+                                self.too_full_lines
+                            ),
+                        }
+                    )
+
+                steps.append(
+                    {
+                        "type": "frames",
+                        "frames": list(
+                            self.too_full_frames
+                        ),
+                        "frame_interval": int(
+                            self.too_full_frame_interval
+                        ),
+                        "loops": int(
+                            self.too_full_loops
+                        ),
+                        "playback": "loop",
+                    }
+                )
+
+                self.play_custom_action(
+                    {
+                        "name": "吃太饱",
+                        "steps": steps,
+                    },
+                    trigger_name="too_full",
+                )
+
+            elif self.too_full_lines:
+                # 图片尚未同步完成时仍保留原来的台词反馈。
                 self.say(
                     random.choice(
                         self.too_full_lines
                     )
                 )
+
             return
 
         food_id = food.get("id")
@@ -3796,6 +3964,13 @@ class DesktopPet(QLabel):
             foods_text
         )
         filenames = []
+
+        for filename in config.get(
+            "too_full_frames",
+            [],
+        ):
+            if filename not in filenames:
+                filenames.append(filename)
 
         for food in config["foods"]:
             for filename in (
@@ -6841,6 +7016,64 @@ class DesktopPet(QLabel):
             trigger_name=trigger_name,
         )
         return True
+
+    def check_mouse_idle_peek(self):
+        """鼠标持续静止足够久后，对偷看动作进行一次随机尝试。"""
+
+        current_position = QPoint(
+            QCursor.pos()
+        )
+
+        if current_position != self.mouse_idle_last_position:
+            self.mouse_idle_last_position = current_position
+            self.mouse_idle_since = time.monotonic()
+            self.mouse_idle_attempted = False
+            return
+
+        idle_seconds = (
+            time.monotonic()
+            - self.mouse_idle_since
+        )
+        required_seconds = int(
+            self.settings.get(
+                "peek_idle_seconds",
+                60,
+            )
+        )
+
+        if idle_seconds < required_seconds:
+            return
+
+        if self.mouse_idle_attempted:
+            return
+
+        # 一次静止期只抽一次。有没有真的触发，由 actions.json
+        # 的 chance / cooldown 决定，因此仍然是“偶尔”来看。
+        if (
+            not self.isVisible()
+            or self.update_in_progress
+            or self.is_dragging
+            or self.is_stroking
+            or self.state
+            not in (
+                "normal",
+                "walking",
+            )
+        ):
+            return
+
+        self.mouse_idle_attempted = True
+
+        played = self.play_trigger_action(
+            "mouse_idle"
+        )
+
+        debug_log(
+            "mouse idle peek attempt "
+            f"idle={idle_seconds:.1f}s "
+            f"required={required_seconds}s "
+            f"played={played}"
+        )
 
     def get_random_actions(self):
         """返回允许自动随机触发的线上动作。"""

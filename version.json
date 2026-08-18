@@ -1,6 +1,6 @@
 {
-  "version": "5.41-nap-1s-frames",
-  "app_version": 65,
+  "version": "5.42-too-full-and-idle-peek",
+  "app_version": 66,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -42,12 +42,15 @@
     "hungry2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "15536f73e48f2a5465a620470dc81ea106fbe4d67c3b330dc490237036b7b144",
+  "app_sha256": "f28fc1d990120474d94596609ee1efb2cbd632d92d188bf12e5cd647104c6236",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
-  "asset_version": 6,
-  "changed_images": [],
+  "asset_version": 7,
+  "changed_images": [
+    "toofull1.PNG",
+    "toofull2.PNG"
+  ],
   "changed_sounds": []
 }
