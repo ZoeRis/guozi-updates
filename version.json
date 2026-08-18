@@ -1,6 +1,6 @@
 {
-  "version": "5.42-too-full-and-idle-peek",
-  "app_version": 66,
+  "version": "5.43-comfy-stroking",
+  "app_version": 67,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -42,15 +42,18 @@
     "hungry2.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "f28fc1d990120474d94596609ee1efb2cbd632d92d188bf12e5cd647104c6236",
+  "app_sha256": "2a815833da8d5613f06e9d5e0e672447f74e7af8cb9ae444f17c5f422eb301e1",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
   "foods_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/foods.json",
-  "asset_version": 7,
+  "asset_version": 8,
   "changed_images": [
-    "toofull1.PNG",
-    "toofull2.PNG"
+    "comfy1.PNG",
+    "comfy2.PNG",
+    "stopstroking.PNG",
+    "beg1.PNG",
+    "beg2.PNG"
   ],
   "changed_sounds": []
 }

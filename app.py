@@ -68,7 +68,7 @@ ONLINE_IMAGE_DIR = APP_DIR / "online_images"
 ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 
-APP_BUILD_VERSION = 66
+APP_BUILD_VERSION = 67
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -234,6 +234,13 @@ STROKE_HEAD_TOP_RATIO = 0.02
 STROKE_HEAD_BOTTOM_RATIO = 0.62
 STROKE_HEAD_LEFT_RATIO = 0.06
 STROKE_HEAD_RIGHT_RATIO = 0.94
+
+# 连续抚摸 4 秒进入“很享受”阶段。
+STROKE_COMFY_AFTER_SECONDS = 4.0
+STROKE_COMFY_FRAME_INTERVAL_MS = 420
+STROKE_STOP_FRAME_MS = 1500
+STROKE_BEG_FRAME_INTERVAL_MS = 360
+STROKE_BEG_LOOPS = 2
 
 
 DEFAULT_SETTINGS = {
@@ -882,6 +889,11 @@ class DesktopPet(QLabel):
         self.stroke_candidate = False
         self.is_stroking = False
         self.stroke_frame_name = None
+        self.stroke_started_at = None
+        self.stroke_comfy = False
+        self.stroke_comfy_frame_index = 0
+        self.stroke_post_sequence = []
+        self.stroke_post_index = 0
 
         # 拖拽速度采样 / 松手惯性
         self.drag_motion_samples = []
@@ -1066,6 +1078,20 @@ class DesktopPet(QLabel):
         self.random_action_timer.setSingleShot(True)
         self.random_action_timer.timeout.connect(
             self.try_random_action
+        )
+
+        self.stroke_comfy_timer = QTimer(self)
+        self.stroke_comfy_timer.setInterval(
+            STROKE_COMFY_FRAME_INTERVAL_MS
+        )
+        self.stroke_comfy_timer.timeout.connect(
+            self.update_comfy_stroking_frame
+        )
+
+        self.stroke_post_timer = QTimer(self)
+        self.stroke_post_timer.setSingleShot(True)
+        self.stroke_post_timer.timeout.connect(
+            self.advance_stroke_post_sequence
         )
 
         self.mouse_idle_timer = QTimer(self)
@@ -3460,6 +3486,36 @@ class DesktopPet(QLabel):
         ]
         self.hungry_images_ready = (
             len(self.hungry_frames) == 2
+        )
+
+        self.comfy_frames = [
+            self.load_optional_image(
+                "comfy1.PNG"
+            ),
+            self.load_optional_image(
+                "comfy2.PNG"
+            ),
+        ]
+        self.comfy_frames_ready = all(
+            self.comfy_frames
+        )
+
+        self.stopstroking_frame = (
+            self.load_optional_image(
+                "stopstroking.PNG"
+            )
+        )
+
+        self.beg_frames = [
+            self.load_optional_image(
+                "beg1.PNG"
+            ),
+            self.load_optional_image(
+                "beg2.PNG"
+            ),
+        ]
+        self.beg_frames_ready = all(
+            self.beg_frames
         )
 
     def apply_timer_settings(self):
@@ -7020,6 +7076,9 @@ class DesktopPet(QLabel):
     def check_mouse_idle_peek(self):
         """鼠标持续静止足够久后，对偷看动作进行一次随机尝试。"""
 
+        if self.is_stroking:
+            self.maybe_enter_comfy_stroking()
+
         current_position = QPoint(
             QCursor.pos()
         )
@@ -7731,6 +7790,14 @@ class DesktopPet(QLabel):
 
     def prepare_custom_action(self):
         """暂停会干扰线上动作的其他行为。"""
+
+        self.stroke_post_timer.stop()
+
+        if self.state == "stroke_post":
+            self.stroke_post_sequence = []
+            self.stroke_post_index = 0
+            self.state = "normal"
+            self.setPixmap(self.normal)
 
         self.stop_custom_action(resume=False)
         self.random_action_timer.stop()
@@ -10496,27 +10563,14 @@ class DesktopPet(QLabel):
         if self.width() <= 0 or self.height() <= 0:
             return False
 
-        local_x = (
-            global_point.x() - self.x()
-        )
-        local_y = (
-            global_point.y() - self.y()
-        )
-
-        x_ratio = (
-            local_x / self.width()
-        )
-        y_ratio = (
-            local_y / self.height()
-        )
+        local_x = global_point.x() - self.x()
+        local_y = global_point.y() - self.y()
+        x_ratio = local_x / self.width()
+        y_ratio = local_y / self.height()
 
         return (
-            STROKE_HEAD_LEFT_RATIO
-            <= x_ratio
-            <= STROKE_HEAD_RIGHT_RATIO
-            and STROKE_HEAD_TOP_RATIO
-            <= y_ratio
-            <= STROKE_HEAD_BOTTOM_RATIO
+            STROKE_HEAD_LEFT_RATIO <= x_ratio <= STROKE_HEAD_RIGHT_RATIO
+            and STROKE_HEAD_TOP_RATIO <= y_ratio <= STROKE_HEAD_BOTTOM_RATIO
         )
 
     def stroke_can_start(self):
@@ -10525,24 +10579,16 @@ class DesktopPet(QLabel):
         return (
             self.stroke_images_ready
             and not self.is_dragging
-            and self.state in (
-                "normal",
-                "walking",
-            )
+            and self.state in ("normal", "walking")
         )
 
-    def begin_stroking(
-        self,
-        cursor_position,
-    ):
-        """进入抚摸状态；停止会抢画面的自动行为。"""
+    def begin_stroking(self, cursor_position):
+        """进入抚摸状态。"""
 
         if not self.stroke_can_start():
             return False
 
-        debug_log(
-            f"stroking begin from_state={self.state}"
-        )
+        debug_log(f"stroking begin from_state={self.state}")
 
         if self.state == "walking":
             self.stop_walk_timers()
@@ -10554,13 +10600,20 @@ class DesktopPet(QLabel):
         self.auto_speech_timer.stop()
         self.sleep_wait_timer.stop()
         self.random_action_timer.stop()
-
-        # 抚摸不应继续累计之前的连戳轮次。
+        self.hunger_timer.stop()
         self.reset_poke_cycle()
+
+        self.stroke_comfy_timer.stop()
+        self.stroke_post_timer.stop()
+        self.stroke_post_sequence = []
+        self.stroke_post_index = 0
 
         self.is_stroking = True
         self.stroke_candidate = False
         self.stroke_frame_name = None
+        self.stroke_started_at = time.monotonic()
+        self.stroke_comfy = False
+        self.stroke_comfy_frame_index = 0
         self.state = "stroking"
 
         try:
@@ -10568,31 +10621,64 @@ class DesktopPet(QLabel):
         except RuntimeError:
             pass
 
-        self.update_stroking_frame(
-            cursor_position
-        )
+        self.update_stroking_frame(cursor_position)
         return True
 
-    def update_stroking_frame(
-        self,
-        cursor_position,
-    ):
-        """鼠标当前位于左/中/右区域，就显示对应抚摸图。"""
+    def maybe_enter_comfy_stroking(self):
+        """连续摸满 4 秒后进入很享受阶段。"""
 
         if (
             not self.is_stroking
-            or not self.stroke_images_ready
+            or self.stroke_comfy
+            or self.stroke_started_at is None
+            or not self.comfy_frames_ready
         ):
+            return False
+
+        elapsed = time.monotonic() - self.stroke_started_at
+        if elapsed < STROKE_COMFY_AFTER_SECONDS:
+            return False
+
+        self.stroke_comfy = True
+        self.stroke_frame_name = None
+        self.stroke_comfy_frame_index = 0
+        debug_log(f"stroking comfy entered elapsed={elapsed:.2f}s")
+        self.setPixmap(self.comfy_frames[0])
+        self.stroke_comfy_frame_index = 1
+        self.stroke_comfy_timer.start()
+        return True
+
+    def update_comfy_stroking_frame(self):
+        """很享受阶段：comfy1 / comfy2 持续交替。"""
+
+        if (
+            not self.is_stroking
+            or not self.stroke_comfy
+            or not self.comfy_frames_ready
+        ):
+            self.stroke_comfy_timer.stop()
             return
 
-        local_x = (
-            cursor_position.x()
-            - self.x()
-        )
-        ratio = local_x / max(
-            1,
-            self.width(),
-        )
+        frame = self.comfy_frames[
+            self.stroke_comfy_frame_index % len(self.comfy_frames)
+        ]
+        self.setPixmap(frame)
+        self.stroke_comfy_frame_index += 1
+
+    def update_stroking_frame(self, cursor_position):
+        """普通抚摸按鼠标左右位置切图；4 秒后进入 comfy。"""
+
+        if not self.is_stroking or not self.stroke_images_ready:
+            return
+
+        if self.maybe_enter_comfy_stroking():
+            return
+
+        if self.stroke_comfy:
+            return
+
+        local_x = cursor_position.x() - self.x()
+        ratio = local_x / max(1, self.width())
 
         if ratio < 1 / 3:
             frame_name = "left"
@@ -10601,54 +10687,106 @@ class DesktopPet(QLabel):
         else:
             frame_name = "right"
 
-        # 这样鼠标左→右自然就是 left → middle → right，
-        # 右→左自然就是 right → middle → left。
         if frame_name == self.stroke_frame_name:
             return
 
-        frame = self.stroke_frames.get(
-            frame_name
-        )
-
+        frame = self.stroke_frames.get(frame_name)
         if frame is None:
             return
 
         self.stroke_frame_name = frame_name
         self.setPixmap(frame)
 
+    def start_stroke_post_sequence(self):
+        """很享受后松手：stopstroking 1.5 秒 → beg1/2 两轮。"""
+
+        if self.stopstroking_frame is None or not self.beg_frames_ready:
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.resume_after_stroking()
+            return
+
+        self.state = "stroke_post"
+        self.stroke_post_sequence = []
+        self.stroke_post_sequence.append((self.stopstroking_frame, STROKE_STOP_FRAME_MS))
+
+        for _ in range(STROKE_BEG_LOOPS):
+            for frame in self.beg_frames:
+                self.stroke_post_sequence.append((frame, STROKE_BEG_FRAME_INTERVAL_MS))
+
+        self.stroke_post_index = 0
+        self.say("怎么不摸了呀？")
+        self.setPixmap(self.stopstroking_frame)
+        self.stroke_post_timer.start(STROKE_STOP_FRAME_MS)
+        debug_log("stroking post sequence start")
+
+    def advance_stroke_post_sequence(self):
+        """驱动 stopstroking / beg 动画。"""
+
+        if self.state != "stroke_post":
+            self.stroke_post_timer.stop()
+            return
+
+        self.stroke_post_index += 1
+
+        if self.stroke_post_index >= len(self.stroke_post_sequence):
+            self.stroke_post_timer.stop()
+            self.stroke_post_sequence = []
+            self.stroke_post_index = 0
+            self.state = "normal"
+            self.setPixmap(self.normal)
+            self.resume_after_stroking()
+            return
+
+        frame, duration = self.stroke_post_sequence[self.stroke_post_index]
+        self.setPixmap(frame)
+        self.stroke_post_timer.start(int(duration))
+
+    def resume_after_stroking(self):
+        """抚摸/讨摸动画结束后恢复自动行为。"""
+
+        self.schedule_blink()
+        self.schedule_auto_speech()
+        self.schedule_random_action()
+        self.schedule_sleep()
+        self.schedule_hunger_reaction()
+
+        if not self.walking_paused:
+            self.schedule_walk()
+
+        self.try_apply_pending_online_update()
+
     def finish_stroking(self):
-        """松手结束抚摸；直接恢复普通状态，不追加任何特殊动作。"""
+        """松手结束抚摸；摸满 4 秒会进入讨摸后续。"""
 
         if not self.is_stroking:
             self.stroke_candidate = False
             return False
 
-        debug_log(
-            f"stroking finish frame={self.stroke_frame_name}"
-        )
+        was_comfy = bool(self.stroke_comfy)
+        debug_log(f"stroking finish frame={self.stroke_frame_name} comfy={was_comfy}")
 
         try:
             self.releaseMouse()
         except RuntimeError:
             pass
 
+        self.stroke_comfy_timer.stop()
         self.is_stroking = False
         self.stroke_candidate = False
         self.stroke_frame_name = None
+        self.stroke_started_at = None
+        self.stroke_comfy = False
+        self.stroke_comfy_frame_index = 0
 
-        if self.state == "stroking":
-            self.state = "normal"
-            self.setPixmap(self.normal)
+        if was_comfy:
+            self.start_stroke_post_sequence()
+        else:
+            if self.state == "stroking":
+                self.state = "normal"
+                self.setPixmap(self.normal)
+            self.resume_after_stroking()
 
-        self.schedule_blink()
-        self.schedule_auto_speech()
-        self.schedule_random_action()
-        self.schedule_sleep()
-
-        if not self.walking_paused:
-            self.schedule_walk()
-
-        self.try_apply_pending_online_update()
         return True
 
     # ---------- 拖动动画 ----------
@@ -12371,6 +12509,9 @@ class DesktopPet(QLabel):
 
         if self.is_stroking:
             self.finish_stroking()
+
+        self.stroke_comfy_timer.stop()
+        self.stroke_post_timer.stop()
 
         self.save_position()
         self.save_pet_state()
