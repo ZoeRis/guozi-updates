@@ -69,7 +69,7 @@ ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 DEVELOPER_MARKER_FILE = APP_DIR / "developer.flag"
 
-APP_BUILD_VERSION = 70
+APP_BUILD_VERSION = 71
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -1159,6 +1159,16 @@ class DesktopPet(QLabel):
         self.sleep_zzz = SleepZzzWidget()
         self.update_status_widget = UpdateStatusWidget()
         self.pet_status_widget = PetStatusWidget()
+
+        # 状态面板打开时持续刷新。
+        # 这样饱食度、当前动作、近期互动和心情变化
+        # 不需要关闭面板再重新打开才能看到。
+        self.pet_status_refresh_timer = QTimer(self)
+        self.pet_status_refresh_timer.setInterval(250)
+        self.pet_status_refresh_timer.timeout.connect(
+            self.refresh_pet_status_widget
+        )
+        self.pet_status_refresh_timer.start()
 
         self.update_status_hide_timer = QTimer(self)
         self.update_status_hide_timer.setSingleShot(True)
@@ -6902,15 +6912,32 @@ class DesktopPet(QLabel):
         }
         return state_names.get(self.state, self.state)
 
-    def show_pet_status(self):
+    def current_pet_status_lines(self):
+        """生成状态面板当前四行内容。"""
+
         self.apply_fullness_decay()
+        return [
+            f"饱食度：{self.fullness} / {self.max_fullness}",
+            f"状态：{self.current_state_label()}",
+            f"最近：{self.current_recent_label()}",
+            f"心情：{self.current_mood_label()}",
+        ]
+
+    def refresh_pet_status_widget(self):
+        """状态面板可见时实时刷新内容。"""
+
+        if not self.pet_status_widget.isVisible():
+            return
+
         self.pet_status_widget.set_lines(
-            [
-                f"饱食度：{self.fullness} / {self.max_fullness}",
-                f"状态：{self.current_state_label()}",
-                f"最近：{self.current_recent_label()}",
-                f"心情：{self.current_mood_label()}",
-            ]
+            self.current_pet_status_lines()
+        )
+        self.position_pet_status_widget()
+        self.pet_status_widget.raise_()
+
+    def show_pet_status(self):
+        self.pet_status_widget.set_lines(
+            self.current_pet_status_lines()
         )
         self.position_pet_status_widget()
         self.pet_status_widget.show()
