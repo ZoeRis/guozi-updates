@@ -69,7 +69,7 @@ ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 DEVELOPER_MARKER_FILE = APP_DIR / "developer.flag"
 
-APP_BUILD_VERSION = 71
+APP_BUILD_VERSION = 72
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -891,6 +891,13 @@ class PetStatusWidget(QWidget):
         self.setAttribute(
             Qt.WidgetAttribute.WA_TranslucentBackground
         )
+        # 状态面板自己的点击必须由它完整吃掉。
+        # 之前在 mousePressEvent 里立刻 hide()，Windows 有机会把随后
+        # 的鼠标松开事件交给下面的果子，于是“关状态面板”会被算成戳果子。
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_NoMousePropagation,
+            True,
+        )
         self.hide()
 
     def set_lines(self, lines):
@@ -898,8 +905,14 @@ class PetStatusWidget(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
-        self.hide()
+        # 按下时先不要隐藏，确保这一整次点击仍属于状态面板。
         event.accept()
+
+    def mouseReleaseEvent(self, event):
+        # 松开也由状态面板吃掉；等本次事件处理完再隐藏，
+        # 避免 release 穿透到底下的果子。
+        event.accept()
+        QTimer.singleShot(0, self.hide)
 
     def paintEvent(self, event):
         painter = QPainter(self)
