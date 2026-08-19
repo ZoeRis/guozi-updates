@@ -1,6 +1,6 @@
 {
   "version": "5.45-time-and-recent-memory",
-  "app_version": 70,
+  "app_version": 71,
   "app_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/app.py",
   "messages_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/messages.txt",
   "settings_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/settings.json",
@@ -64,7 +64,7 @@
     "hereright3.PNG"
   ],
   "app_api": 1,
-  "app_sha256": "7b7bef038fbe2e7ba8995c8e998ffc2993e1a9112792b88a5dfc7ff878e291a7",
+  "app_sha256": "e3379cdaabb072cea50992879b84db91bfb2dae165f24cc410b120b4f86d3acc",
   "launcher_version": 33,
   "launcher_url": "https://raw.githubusercontent.com/ZoeRis/guozi-updates/main/launcher.py",
   "launcher_sha256": "e192a6bc4d01911b5a259c428e4b7654e76f860b403de569ecf2303e01922760",
