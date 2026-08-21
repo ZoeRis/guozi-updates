@@ -69,7 +69,7 @@ ONLINE_SOUND_DIR = APP_DIR / "online_sounds"
 DEBUG_LOG_FILE = APP_DIR / "guozi_debug.log"
 DEVELOPER_MARKER_FILE = APP_DIR / "developer.flag"
 
-APP_BUILD_VERSION = 72
+APP_BUILD_VERSION = 73
 
 UPDATE_STAGE_DIR = APP_DIR / ".guozi_update_stage"
 UPDATE_BACKUP_DIR = APP_DIR / ".guozi_update_backup"
@@ -10821,13 +10821,18 @@ class DesktopPet(QLabel):
             self.stop_walk_timers()
             return
 
+        # “暂停散步”只禁止果子自己随机散步。
+        # “果子在哪？”和双击召唤属于用户明确发出的移动指令，
+        # 即使随机散步处于暂停状态，也必须允许这次召唤完整跑完。
+        if self.summon_run_active:
+            self.update_summon_running()
+            return
+
         if self.walking_paused:
             self.stop_walking()
             return
 
-        if self.summon_run_active:
-            self.update_summon_running()
-        elif self.edge_crawl_active:
+        if self.edge_crawl_active:
             self.update_edge_crawling()
         elif (
             self.settings["movement_mode"]
